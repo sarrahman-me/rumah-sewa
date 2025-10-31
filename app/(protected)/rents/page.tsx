@@ -1,11 +1,10 @@
 "use client";
-import * as React from "react";
+import { useState, useEffect, useCallback } from "react";
 import { AuthGate } from "@/components/AuthGate";
 import { supabase } from "@/lib/supabase";
 import { currentPeriodISO, isoToMonth, monthToISOFirst } from "@/lib/period";
 import { idr } from "@/lib/format";
 import { Button } from "@/components/ui/Button";
-import { Card } from "@/components/ui/Card";
 import {
   Table,
   TableBody,
@@ -16,47 +15,149 @@ import {
   TableRow,
 } from "@/components/ui/Table";
 import { Input } from "@/components/ui/Input";
+import { Modal } from "@/components/ui/Modal";
 
-type RentRow = { id: string; house_id: string; code: string; amount: number; };
+type RentRow = {
+  house_id: string;
+  code: string;
+  owner: string;
+  amount: number;
+};
 
-function nextPeriodISO(yyyyMm01: string): string {
-  const d = new Date(yyyyMm01);
-  const nd = new Date(d.getFullYear(), d.getMonth() + 1, 1);
-  const yyyy = nd.getFullYear();
-  const mm = String(nd.getMonth() + 1).padStart(2, "0");
-  return `${yyyy}-${mm}-01`;
-}
+type EditState = {
+  house_id: string;
+  code: string;
+  owner: string;
+  currentAmount: number;
+};
 
 function RentsPageInner() {
-  const [period, setPeriod] = React.useState(currentPeriodISO());
-  const [rows, setRows] = React.useState<RentRow[]>([]);
-  const [msg, setMsg] = React.useState<string | null>(null);
-  const np = React.useMemo(() => nextPeriodISO(period), [period]);
-  const periodMonth = isoToMonth(period);
-  const nextPeriodMonth = isoToMonth(np);
+  const [period, setPeriod] = useState(currentPeriodISO());
+  const [rows, setRows] = useState<RentRow[]>([]);
+  const [message, setMessage] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [editState, setEditState] = useState<EditState | null>(null);
+  const [editForm, setEditForm] = useState({
+    amount: "",
+    startMonth: isoToMonth(currentPeriodISO()),
+  });
+  const [saving, setSaving] = useState(false);
 
-  async function load() {
-    const { data, error } = await supabase
-      .from("rents")
-      .select("id, amount, house_id, houses:house_id ( code )")
-      .eq("period", period)
-      .order("house_id");
-    if (error) { setMsg(error.message); return; }
-    const mapped = (data||[]).map((r:any)=>({ id:r.id, house_id:r.house_id, code:r.houses?.code ?? "-", amount:r.amount })) as RentRow[];
-    setRows(mapped);
-    setMsg(null);
+  const periodMonth = isoToMonth(period);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setMessage(null);
+    const [{ data: houses, error: housesErr }, { data: effective, error: effectiveErr }] =
+      await Promise.all([
+        supabase.from("houses").select("id,code,owner").order("code"),
+        supabase.rpc("rent_effective_all", { p_period: period }),
+      ]);
+
+    if (housesErr || effectiveErr) {
+      setMessage(housesErr?.message || effectiveErr?.message || "Gagal memuat data.");
+      setLoading(false);
+      return;
+    }
+
+    const effectiveMap = new Map<string, number>();
+    for (const row of effective || []) {
+      const houseId = (row as any).house_id as string | null;
+      if (!houseId) continue;
+      effectiveMap.set(houseId, Number((row as any).amount ?? 0));
+    }
+
+    const nextRows: RentRow[] = (houses || []).map((h: any) => ({
+      house_id: h.id,
+      code: h.code,
+      owner: h.owner ?? "-",
+      amount: effectiveMap.get(h.id) ?? 0,
+    }));
+
+    setRows(nextRows);
+    setLoading(false);
+  }, [period]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  function openEdit(row: RentRow) {
+    setEditState({
+      house_id: row.house_id,
+      code: row.code,
+      owner: row.owner,
+      currentAmount: row.amount,
+    });
+    setEditForm({
+      amount: row.amount > 0 ? String(row.amount) : "",
+      startMonth: periodMonth,
+    });
   }
 
-  React.useEffect(()=>{ load(); }, [period]);
+  function closeEdit() {
+    setEditState(null);
+    setEditForm({
+      amount: "",
+      startMonth: periodMonth,
+    });
+  }
 
-  async function copyToNext() {
-    setMsg(null);
-    const { error } = await supabase.rpc("copy_rents_to_next", { p_current: period });
-    if (error) {
-      setMsg(error.message);
-    } else {
-      setMsg(`Tarif disalin ke periode ${np}.`);
+  async function submitEdit() {
+    if (!editState) return;
+    const amountValue = Number(editForm.amount);
+    if (!Number.isFinite(amountValue) || amountValue <= 0) {
+      setMessage("Nominal harus lebih besar dari 0.");
+      return;
     }
+    if (!editForm.startMonth) {
+      setMessage("Periode mulai harus dipilih.");
+      return;
+    }
+
+    const startISO = monthToISOFirst(editForm.startMonth);
+    setSaving(true);
+
+    const { data: effective, error: effectiveErr } = await supabase.rpc(
+      "rent_effective_all",
+      { p_period: startISO },
+    );
+    if (effectiveErr) {
+      setMessage(effectiveErr.message);
+      setSaving(false);
+      return;
+    }
+    const currentEntry = (effective || []).find(
+      (row: any) => row.house_id === editState.house_id,
+    );
+    const currentAmount = Number(currentEntry?.amount ?? 0);
+    if (Math.abs(currentAmount - amountValue) < 0.0001) {
+      setMessage("Harga tidak berubah.");
+      setSaving(false);
+      closeEdit();
+      return;
+    }
+
+    const { error } = await supabase
+      .from("rents")
+      .upsert(
+        {
+          house_id: editState.house_id,
+          period: startISO,
+          amount: amountValue,
+        },
+        { onConflict: "house_id,period" },
+      );
+    if (error) {
+      setMessage(error.message);
+      setSaving(false);
+      return;
+    }
+
+    setMessage(`Harga ${editState.code} diperbarui.`);
+    setSaving(false);
+    closeEdit();
+    await load();
   }
 
   return (
@@ -76,50 +177,123 @@ function RentsPageInner() {
             id="rents-period"
             type="month"
             value={periodMonth}
-            onChange={(e) => setPeriod(monthToISOFirst(e.target.value))}
+            onChange={(event) => {
+              const value = event.target.value;
+              if (!value) return;
+              setPeriod(monthToISOFirst(value));
+            }}
           />
-          <Button size="sm" variant="ghost" onClick={copyToNext}>
-            Salin ke {nextPeriodMonth || "-"}
-          </Button>
         </div>
       </div>
-      {msg && (
-        <div className="card card-pad text-sm text-[var(--primary)]">
-          {msg}
-        </div>
+      {message && (
+        <div className="card card-pad text-sm text-[var(--primary)]">{message}</div>
       )}
       <TableContainer>
         <Table className="text-sm">
           <TableHead>
             <TableRow>
               <TableHeaderCell>Rumah</TableHeaderCell>
+              <TableHeaderCell>Pemilik</TableHeaderCell>
               <TableHeaderCell className="text-right">Nominal</TableHeaderCell>
+              <TableHeaderCell className="text-right">Aksi</TableHeaderCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {rows.map((r) => (
-              <TableRow key={r.house_id}>
+            {rows.map((row) => (
+              <TableRow key={row.house_id}>
                 <TableCell className="font-medium text-[var(--ink)]">
-                  {r.code}
+                  {row.code}
                 </TableCell>
-                <TableCell className="text-right font-semibold text-[var(--primary)]">
-                  {idr(r.amount)}
+                <TableCell className="text-[var(--muted)]">{row.owner}</TableCell>
+                <TableCell className="text-right tabular-nums font-semibold text-[var(--primary)]">
+                  {idr(row.amount)}
+                </TableCell>
+                <TableCell className="text-right">
+                  <Button size="sm" variant="ghost" onClick={() => openEdit(row)}>
+                    Ubah harga
+                  </Button>
                 </TableCell>
               </TableRow>
             ))}
-            {rows.length === 0 && (
+            {!loading && rows.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={2}
+                  colSpan={4}
                   className="py-6 text-center text-[var(--muted)]"
                 >
-                  Tidak ada tarif untuk periode ini.
+                  Tidak ada data.
+                </TableCell>
+              </TableRow>
+            )}
+            {loading && (
+              <TableRow>
+                <TableCell
+                  colSpan={4}
+                  className="py-6 text-center text-[var(--muted)]"
+                >
+                  Memuat data...
                 </TableCell>
               </TableRow>
             )}
           </TableBody>
         </Table>
       </TableContainer>
+
+      <Modal
+        open={!!editState}
+        onOpenChange={(open) => {
+          if (!open) closeEdit();
+        }}
+        title={editState ? `Ubah harga ${editState.code}` : undefined}
+        footer={
+          <>
+            <Button variant="ghost" onClick={closeEdit}>
+              Batal
+            </Button>
+            <Button
+              variant="primary"
+              onClick={submitEdit}
+              disabled={saving}
+            >
+              {saving ? "Menyimpan..." : "Simpan"}
+            </Button>
+          </>
+        }
+      >
+        {editState && (
+          <div className="grid gap-4">
+            <div className="field-group">
+              <label className="field-label" htmlFor="rent-amount">
+                Nominal
+              </label>
+              <Input
+                id="rent-amount"
+                type="number"
+                inputMode="decimal"
+                min="0"
+                className="tabular-nums"
+                value={editForm.amount}
+                onChange={(event) =>
+                  setEditForm((prev) => ({ ...prev, amount: event.target.value }))
+                }
+              />
+            </div>
+            <div className="field-group">
+              <label className="field-label" htmlFor="rent-start-month">
+                Berlaku mulai
+              </label>
+              <Input
+                id="rent-start-month"
+                type="month"
+                value={editForm.startMonth}
+                onChange={(event) =>
+                  setEditForm((prev) => ({ ...prev, startMonth: event.target.value }))
+                }
+              />
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

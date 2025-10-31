@@ -86,6 +86,25 @@ function num(value: unknown) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function monthRange(fromISO: string, toISO: string) {
+  const result: string[] = [];
+  const start = new Date(fromISO);
+  const end = new Date(toISO);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return result;
+  }
+  const current = new Date(start.getTime());
+  current.setDate(1);
+  end.setDate(1);
+  while (current <= end) {
+    const y = current.getFullYear();
+    const m = String(current.getMonth() + 1).padStart(2, "0");
+    result.push(`${y}-${m}-01`);
+    current.setMonth(current.getMonth() + 1);
+  }
+  return result;
+}
+
 function getActionLabel(type: ActionType) {
   switch (type) {
     case "rent-full":
@@ -116,6 +135,7 @@ function stickyCellClass(extra?: string) {
 type StatusMaps = {
   rent: Record<string, Record<string, RentStatus>>;
   water: Record<string, Record<string, WaterStatus>>;
+  vacancy: Record<string, Record<string, boolean>>;
 };
 
 function DashboardInner() {
@@ -128,6 +148,7 @@ function DashboardInner() {
   const [statusMaps, setStatusMaps] = React.useState<StatusMaps>({
     rent: {},
     water: {},
+    vacancy: {},
   });
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -140,6 +161,12 @@ function DashboardInner() {
   const [detailModal, setDetailModal] = React.useState<DetailModalState | null>(
     null,
   );
+  const [occupancyModal, setOccupancyModal] = React.useState<{
+    house: Row;
+    periodMonth: string;
+    status: "vacant" | "occupied";
+    note: string;
+  } | null>(null);
   const [actionSubmitting, setActionSubmitting] = React.useState(false);
   const [undoSubmitting, setUndoSubmitting] = React.useState(false);
   const [isPending, startTransition] = React.useTransition();
@@ -173,7 +200,8 @@ function DashboardInner() {
     let rentQuery = supabase
       .from("v_rent_status")
       .select("house_id,period,rent_bill,rent_paid,rent_due");
-    if ("eq" in periodFilter) rentQuery = rentQuery.eq("period", periodFilter.eq);
+    if ("eq" in periodFilter)
+      rentQuery = rentQuery.eq("period", periodFilter.eq);
     else
       rentQuery = rentQuery
         .gte("period", periodFilter.gte)
@@ -182,9 +210,20 @@ function DashboardInner() {
     let waterQuery = supabase
       .from("v_water_status")
       .select("house_id,period,water_bill,water_paid,water_due");
-    if ("eq" in periodFilter) waterQuery = waterQuery.eq("period", periodFilter.eq);
+    if ("eq" in periodFilter)
+      waterQuery = waterQuery.eq("period", periodFilter.eq);
     else
       waterQuery = waterQuery
+        .gte("period", periodFilter.gte)
+        .lte("period", periodFilter.lte);
+
+    let vacancyQuery = supabase
+      .from("house_vacancies")
+      .select("house_id,period");
+    if ("eq" in periodFilter)
+      vacancyQuery = vacancyQuery.eq("period", periodFilter.eq);
+    else
+      vacancyQuery = vacancyQuery
         .gte("period", periodFilter.gte)
         .lte("period", periodFilter.lte);
 
@@ -192,13 +231,15 @@ function DashboardInner() {
       { data: houses, error: housesErr },
       { data: rentStatuses, error: rentErr },
       { data: waterStatuses, error: waterErr },
-    ] = await Promise.all([housesPromise, rentQuery, waterQuery]);
+      { data: vacancyRows, error: vacancyErr },
+    ] = await Promise.all([housesPromise, rentQuery, waterQuery, vacancyQuery]);
 
-    if (housesErr || rentErr || waterErr) {
+    if (housesErr || rentErr || waterErr || vacancyErr) {
       setError(
         housesErr?.message ||
           rentErr?.message ||
           waterErr?.message ||
+          vacancyErr?.message ||
           "Gagal memuat data.",
       );
       setLoading(false);
@@ -262,8 +303,17 @@ function DashboardInner() {
       };
     }
 
+    const vacancyMap: Record<string, Record<string, boolean>> = {};
+    for (const v of vacancyRows || []) {
+      const houseId = (v as any).house_id as string | null;
+      const period = (v as any).period as string | null;
+      if (!houseId || !period) continue;
+      if (!vacancyMap[houseId]) vacancyMap[houseId] = {};
+      vacancyMap[houseId][period] = true;
+    }
+
     setRows(Object.values(base).sort((a, b) => a.code.localeCompare(b.code)));
-    setStatusMaps({ rent: rentMap, water: waterMap });
+    setStatusMaps({ rent: rentMap, water: waterMap, vacancy: vacancyMap });
     setLoading(false);
   }, [mode, rangeFromISO, rangeToISO, singlePeriodISO]);
 
@@ -295,6 +345,26 @@ function DashboardInner() {
   const currentPeriodMonth = isRange ? rangeFrom : singleMonth;
   const currentPeriodISOSelected = monthToISOFirst(currentPeriodMonth);
 
+  const isHouseVacantForSelection = React.useCallback(
+    (houseId: string) => {
+      const vacancy = statusMaps.vacancy[houseId];
+      if (!vacancy) return false;
+      if (!isRange) {
+        return Boolean(vacancy[singlePeriodISO]);
+      }
+      const months = monthRange(rangeFromISO, rangeToISO);
+      if (months.length === 0) return false;
+      return months.every((month) => Boolean(vacancy[month]));
+    },
+    [
+      statusMaps.vacancy,
+      isRange,
+      singlePeriodISO,
+      rangeFromISO,
+      rangeToISO,
+    ],
+  );
+
   function getDueValue(
     houseId: string,
     kind: PaymentKind,
@@ -304,6 +374,17 @@ function DashboardInner() {
       return num(statusMaps.rent[houseId]?.[periodISO]?.rent_due);
     }
     return num(statusMaps.water[houseId]?.[periodISO]?.water_due);
+  }
+
+  function openOccupancy(house: Row) {
+    const periodMonth = currentPeriodMonth;
+    const vacant = isHouseVacantForSelection(house.house_id);
+    setOccupancyModal({
+      house,
+      periodMonth,
+      status: vacant ? "vacant" : "occupied",
+      note: "",
+    });
   }
 
   function openAction(type: ActionType, house: Row) {
@@ -324,7 +405,34 @@ function DashboardInner() {
     });
   }
 
-  function openUndo(house: Row) {
+    async function saveOccupancy() {
+    if (!occupancyModal) return;
+    const periodISO = monthToISOFirst(occupancyModal.periodMonth);
+    setFeedback(null);
+    const payload = {
+      house_id: occupancyModal.house.house_id,
+      period: periodISO,
+      note: occupancyModal.note ? occupancyModal.note : null,
+    };
+    if (occupancyModal.status === "vacant") {
+      await supabase
+        .from("house_vacancies")
+        .upsert(payload, { onConflict: "house_id,period" });
+    } else {
+      await supabase
+        .from("house_vacancies")
+        .delete()
+        .eq("house_id", occupancyModal.house.house_id)
+        .eq("period", periodISO);
+    }
+    setOccupancyModal(null);
+    setFeedback("Status hunian diperbarui.");
+    startTransition(() => {
+      loadData();
+    });
+  }
+
+function openUndo(house: Row) {
     setUndoModal({
       house,
       periodMonth: currentPeriodMonth,
@@ -336,11 +444,11 @@ function DashboardInner() {
     setDetailModal({ house });
   }
 
-  function closeModals() {
-    setActionModal(null);
-    setUndoModal(null);
-    setDetailModal(null);
-  }
+  // function closeModals() {
+  //   setActionModal(null);
+  //   setUndoModal(null);
+  //   setDetailModal(null);
+  // }
 
   function updateActionAmountForNewPeriod(periodMonth: string) {
     if (!actionModal) return;
@@ -353,7 +461,9 @@ function DashboardInner() {
             ...prev,
             periodMonth,
             amount:
-              prev.type.endsWith("full") && due > 0 ? String(due.toFixed(0)) : prev.amount,
+              prev.type.endsWith("full") && due > 0
+                ? String(due.toFixed(0))
+                : prev.amount,
           }
         : prev,
     );
@@ -504,9 +614,12 @@ function DashboardInner() {
     <>
       <div className="page-stack">
         <div className="flex flex-col gap-2">
-          <h1 className="text-2xl font-semibold text-[var(--ink)]">Dashboard</h1>
+          <h1 className="text-2xl font-semibold text-[var(--ink)]">
+            Dashboard
+          </h1>
           <p className="text-sm text-[var(--muted)]">
-            Ringkasan status sewa &amp; air. Perbarui pembayaran melalui modal aksi.
+            Ringkasan status sewa &amp; air. Perbarui pembayaran melalui modal
+            aksi.
           </p>
         </div>
 
@@ -587,15 +700,24 @@ function DashboardInner() {
         )}
 
         <div className="grid gap-3 sm:hidden">
-          {rows.map((row) => (
-            <MobileRowCard
-              key={row.house_id}
-              row={row}
-              onAction={openAction}
-              onUndo={openUndo}
-              onDetail={openDetail}
-            />
-          ))}
+          {rows.map((row) => {
+            const vacant = isHouseVacantForSelection(row.house_id);
+            const showRent = !vacant && row.rent_due > 0;
+            const showWater = row.water_due > 0;
+            return (
+              <MobileRowCard
+                key={row.house_id}
+                row={row}
+                vacant={vacant}
+                showRent={showRent}
+                showWater={showWater}
+                onAction={openAction}
+                onUndo={openUndo}
+                onDetail={openDetail}
+                onOccupancy={openOccupancy}
+              />
+            );
+          })}
           {!loading && rows.length === 0 && (
             <Card>
               <p className="text-center text-sm text-[var(--muted)]">
@@ -621,12 +743,8 @@ function DashboardInner() {
                   Rumah
                 </TableHeaderCell>
                 <TableHeaderCell className="px-4 py-3">Pemilik</TableHeaderCell>
-                <TableHeaderCell className="px-4 py-3">
-                  Sewa
-                </TableHeaderCell>
-                <TableHeaderCell className="px-4 py-3">
-                  Air
-                </TableHeaderCell>
+                <TableHeaderCell className="px-4 py-3">Sewa</TableHeaderCell>
+                <TableHeaderCell className="px-4 py-3">Air</TableHeaderCell>
                 <TableHeaderCell className="px-4 py-3 text-right">
                   Aksi
                 </TableHeaderCell>
@@ -644,15 +762,24 @@ function DashboardInner() {
                 </TableRow>
               )}
               {!loading &&
-                rows.map((row) => (
-                  <DashboardRowTable
-                    key={row.house_id}
-                    row={row}
-                    onAction={openAction}
-                    onUndo={openUndo}
-                    onDetail={openDetail}
-                  />
-                ))}
+                rows.map((row) => {
+                  const vacant = isHouseVacantForSelection(row.house_id);
+                  const showRent = !vacant && row.rent_due > 0;
+                  const showWater = row.water_due > 0;
+                  return (
+                    <DashboardRowTable
+                      key={row.house_id}
+                      row={row}
+                      vacant={vacant}
+                      showRent={showRent}
+                      showWater={showWater}
+                      onAction={openAction}
+                      onUndo={openUndo}
+                      onDetail={openDetail}
+                      onOccupancy={openOccupancy}
+                    />
+                  );
+                })}
               {!loading && rows.length === 0 && (
                 <TableRow>
                   <TableCell
@@ -720,7 +847,8 @@ function DashboardInner() {
                 {actionModal.house.code} · {actionModal.house.owner}
               </p>
               <p className="text-xs text-[var(--muted)]">
-                Periode bawaan: {isRange ? `${rangeFrom} → ${rangeTo}` : singleMonth}
+                Periode bawaan:{" "}
+                {isRange ? `${rangeFrom} → ${rangeTo}` : singleMonth}
               </p>
             </div>
             <div className="grid gap-4">
@@ -918,6 +1046,84 @@ function DashboardInner() {
           </>
         )}
       </Modal>
+
+      <Modal
+        open={!!occupancyModal}
+        onOpenChange={(open) => {
+          if (!open) setOccupancyModal(null);
+        }}
+        title="Status Hunian"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setOccupancyModal(null)}>
+              Batal
+            </Button>
+            <Button
+              variant="primary"
+              onClick={saveOccupancy}
+            >
+              Simpan
+            </Button>
+          </>
+        }
+      >
+        {occupancyModal && (
+          <div className="grid gap-4">
+            <div className="field-group">
+              <label className="field-label" htmlFor="occupancy-period">
+                Periode
+              </label>
+              <Input
+                id="occupancy-period"
+                type="month"
+                value={occupancyModal.periodMonth}
+                onChange={(event) =>
+                  setOccupancyModal((prev) =>
+                    prev
+                      ? { ...prev, periodMonth: event.target.value }
+                      : prev,
+                  )
+                }
+              />
+            </div>
+            <div className="field-group">
+              <label className="field-label" htmlFor="occupancy-status">
+                Status
+              </label>
+              <select
+                id="occupancy-status"
+                className="select focus-ring"
+                value={occupancyModal.status}
+                onChange={(event) =>
+                  setOccupancyModal((prev) =>
+                    prev
+                      ? { ...prev, status: event.target.value as "vacant" | "occupied" }
+                      : prev,
+                  )
+                }
+              >
+                <option value="vacant">Kosong</option>
+                <option value="occupied">Terisi</option>
+              </select>
+            </div>
+            <div className="field-group">
+              <label className="field-label" htmlFor="occupancy-note">
+                Catatan (opsional)
+              </label>
+              <Input
+                id="occupancy-note"
+                value={occupancyModal.note}
+                onChange={(event) =>
+                  setOccupancyModal((prev) =>
+                    prev ? { ...prev, note: event.target.value } : prev,
+                  )
+                }
+                placeholder="Mis. renovasi"
+              />
+            </div>
+          </div>
+        )}
+      </Modal>
     </>
   );
 }
@@ -928,12 +1134,23 @@ type RowActionHandlers = {
   onDetail: (row: Row) => void;
 };
 
+type DashboardRowTableProps = RowActionHandlers & {
+  row: Row;
+  vacant: boolean;
+  showRent: boolean;
+  showWater: boolean;
+};
+
 const DashboardRowTable = React.memo(function DashboardRowTable({
   row,
+  vacant,
+  showRent,
+  showWater,
   onAction,
   onUndo,
   onDetail,
-}: { row: Row } & RowActionHandlers) {
+  onOccupancy,
+}: DashboardRowTableProps & { onOccupancy: (row: Row) => void }) {
   return (
     <TableRow className="align-top">
       <TableCell className={cx(stickyCellClass("px-4 py-3 font-semibold"))}>
@@ -942,6 +1159,7 @@ const DashboardRowTable = React.memo(function DashboardRowTable({
       <TableCell className="px-4 py-3">
         <div className="flex flex-col gap-1">
           <span>{row.owner}</span>
+          {vacant && <Badge variant="warningSoft">Kosong</Badge>}
           {row.is_repair_fund && (
             <Badge variant="warningSoft">Dana Perbaikan</Badge>
           )}
@@ -962,32 +1180,58 @@ const DashboardRowTable = React.memo(function DashboardRowTable({
         />
       </TableCell>
       <TableCell className="px-4 py-3 text-right">
-        <RowActions row={row} onAction={onAction} onUndo={onUndo} onDetail={onDetail} />
+        <RowActions
+          row={row}
+          showRent={showRent}
+          showWater={showWater}
+          onAction={onAction}
+          onUndo={onUndo}
+          onDetail={onDetail}
+          onOccupancy={onOccupancy}
+        />
       </TableCell>
     </TableRow>
   );
 });
 
+type MobileRowCardProps = RowActionHandlers & {
+  row: Row;
+  vacant: boolean;
+  showRent: boolean;
+  showWater: boolean;
+};
+
 const MobileRowCard = React.memo(function MobileRowCard({
   row,
+  vacant,
+  showRent,
+  showWater,
   onAction,
   onUndo,
   onDetail,
-}: { row: Row } & RowActionHandlers) {
+  onOccupancy,
+}: MobileRowCardProps & { onOccupancy: (row: Row) => void }) {
   return (
     <Card padded={false}>
       <div className="card-pad flex flex-col gap-3">
         <div className="flex items-start justify-between">
           <div>
-            <p className="text-sm font-semibold text-[var(--ink)]">{row.code}</p>
+            <p className="text-sm font-semibold text-[var(--ink)]">
+              {row.code}
+            </p>
             <p className="text-sm text-[var(--muted)]">{row.owner}</p>
+            {vacant && (
+              <div className="mt-1">
+                <Badge variant="warningSoft">Kosong</Badge>
+              </div>
+            )}
             {row.is_repair_fund && (
               <div className="mt-1">
                 <Badge variant="warningSoft">Dana Perbaikan</Badge>
               </div>
             )}
           </div>
-          <RowMenu row={row} onUndo={onUndo} onDetail={onDetail} />
+          <RowMenu row={row} onUndo={onUndo} onDetail={onDetail} onOccupancy={onOccupancy} />
         </div>
         <div className="grid gap-3">
           <div>
@@ -1008,7 +1252,7 @@ const MobileRowCard = React.memo(function MobileRowCard({
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          {row.rent_due > 0 && (
+          {showRent && (
             <Button
               size="sm"
               variant="primary"
@@ -1017,7 +1261,7 @@ const MobileRowCard = React.memo(function MobileRowCard({
               Sewa Lunas
             </Button>
           )}
-          {row.water_due > 0 && (
+          {showWater && (
             <Button
               size="sm"
               variant="primaryOutline"
@@ -1026,7 +1270,12 @@ const MobileRowCard = React.memo(function MobileRowCard({
               Air Lunas
             </Button>
           )}
-          <PartialMenu row={row} onAction={onAction} />
+          <PartialMenu
+            row={row}
+            onAction={onAction}
+            showRent={showRent}
+            showWater={showWater}
+          />
         </div>
       </div>
     </Card>
@@ -1047,7 +1296,8 @@ function StatusStack({
   return (
     <div className="flex flex-col gap-1 text-xs">
       <span className="text-[var(--muted)]">
-        Tagih <span className="tabular-nums text-[var(--ink)]">{idr(bill)}</span>
+        Tagih{" "}
+        <span className="tabular-nums text-[var(--ink)]">{idr(bill)}</span>
       </span>
       <span className="text-[var(--muted)]">
         Bayar{" "}
@@ -1085,7 +1335,8 @@ function TotalsCell({
     <div className="flex flex-col gap-1 text-xs">
       <span className="font-medium text-[var(--muted)]">{label}</span>
       <span className="text-[var(--muted)]">
-        Tagih <span className="tabular-nums text-[var(--ink)]">{idr(bill)}</span>
+        Tagih{" "}
+        <span className="tabular-nums text-[var(--ink)]">{idr(bill)}</span>
       </span>
       <span className="text-[var(--muted)]">
         Bayar{" "}
@@ -1107,17 +1358,32 @@ function TotalsCell({
   );
 }
 
-function RowActions({ row, onAction, onUndo, onDetail }: { row: Row } & RowActionHandlers) {
-  const hasRentDue = row.rent_due > 0;
-  const hasWaterDue = row.water_due > 0;
+function RowActions({
+  row,
+  showRent,
+  showWater,
+  onAction,
+  onUndo,
+  onDetail,
+  onOccupancy,
+}: {
+  row: Row;
+  showRent: boolean;
+  showWater: boolean;
+  onOccupancy: (row: Row) => void;
+} & RowActionHandlers) {
   return (
     <div className="flex items-center justify-end gap-2">
-      {hasRentDue && (
-        <Button size="sm" variant="primary" onClick={() => onAction("rent-full", row)}>
+      {showRent && (
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={() => onAction("rent-full", row)}
+        >
           Sewa Lunas
         </Button>
       )}
-      {hasWaterDue && (
+      {showWater && (
         <Button
           size="sm"
           variant="primaryOutline"
@@ -1126,19 +1392,30 @@ function RowActions({ row, onAction, onUndo, onDetail }: { row: Row } & RowActio
           Air Lunas
         </Button>
       )}
-      <PartialMenu row={row} onAction={onAction} />
-      <RowMenu row={row} onUndo={onUndo} onDetail={onDetail} />
+      <PartialMenu
+        row={row}
+        showRent={showRent}
+        showWater={showWater}
+        onAction={onAction}
+      />
+      <RowMenu row={row} onUndo={onUndo} onDetail={onDetail} onOccupancy={onOccupancy} />
     </div>
   );
 }
 
 function PartialMenu({
   row,
+  showRent,
+  showWater,
   onAction,
 }: {
   row: Row;
+  showRent: boolean;
+  showWater: boolean;
   onAction: (type: ActionType, row: Row) => void;
 }) {
+  if (!showRent && !showWater) return null;
+
   const [open, setOpen] = React.useState(false);
   const menuRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -1155,6 +1432,9 @@ function PartialMenu({
     return () => document.removeEventListener("mousedown", handleClick);
   }, [open]);
 
+  const canPartialRent = showRent;
+  const canPartialWater = showWater;
+
   return (
     <div className="relative" ref={menuRef}>
       <Button
@@ -1168,26 +1448,30 @@ function PartialMenu({
       </Button>
       {open && (
         <div className="absolute right-0 z-30 mt-2 w-40 rounded-[var(--radius)] border border-[var(--border)] bg-white p-1 shadow-lg">
-          <button
-            type="button"
-            className="w-full rounded-[var(--radius)] px-3 py-2 text-left text-sm hover:bg-[#eef2ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
-            onClick={() => {
-              onAction("rent-partial", row);
-              setOpen(false);
-            }}
-          >
-            Sewa
-          </button>
-          <button
-            type="button"
-            className="w-full rounded-[var(--radius)] px-3 py-2 text-left text-sm hover:bg-[#eef2ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
-            onClick={() => {
-              onAction("water-partial", row);
-              setOpen(false);
-            }}
-          >
-            Air
-          </button>
+          {canPartialRent && (
+            <button
+              type="button"
+              className="w-full rounded-[var(--radius)] px-3 py-2 text-left text-sm hover:bg-[#eef2ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
+              onClick={() => {
+                onAction("rent-partial", row);
+                setOpen(false);
+              }}
+            >
+              Sewa
+            </button>
+          )}
+          {canPartialWater && (
+            <button
+              type="button"
+              className="w-full rounded-[var(--radius)] px-3 py-2 text-left text-sm hover:bg-[#eef2ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
+              onClick={() => {
+                onAction("water-partial", row);
+                setOpen(false);
+              }}
+            >
+              Air
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -1198,10 +1482,12 @@ function RowMenu({
   row,
   onUndo,
   onDetail,
+  onOccupancy,
 }: {
   row: Row;
   onUndo: (row: Row) => void;
   onDetail: (row: Row) => void;
+  onOccupancy: (row: Row) => void;
 }) {
   const [open, setOpen] = React.useState(false);
   const menuRef = React.useRef<HTMLDivElement | null>(null);
@@ -1317,10 +1603,14 @@ function DetailBreakdown({
                   <p className="font-medium text-[var(--ink)]">
                     {isoToMonth(period)}
                   </p>
-                  <p className="text-xs text-[var(--muted)]">Tagih {idr(value.rent_bill)}</p>
+                  <p className="text-xs text-[var(--muted)]">
+                    Tagih {idr(value.rent_bill)}
+                  </p>
                 </div>
                 <div className="text-right">
-                  <p className="text-xs text-[#047857]">Bayar {idr(value.rent_paid)}</p>
+                  <p className="text-xs text-[#047857]">
+                    Bayar {idr(value.rent_paid)}
+                  </p>
                   {value.rent_due > 0 ? (
                     <p className="text-xs font-semibold text-[#dc2626]">
                       Tunggak {idr(value.rent_due)}
@@ -1350,10 +1640,14 @@ function DetailBreakdown({
                   <p className="font-medium text-[var(--ink)]">
                     {isoToMonth(period)}
                   </p>
-                  <p className="text-xs text-[var(--muted)]">Tagih {idr(value.water_bill)}</p>
+                  <p className="text-xs text-[var(--muted)]">
+                    Tagih {idr(value.water_bill)}
+                  </p>
                 </div>
                 <div className="text-right">
-                  <p className="text-xs text-[#047857]">Bayar {idr(value.water_paid)}</p>
+                  <p className="text-xs text-[#047857]">
+                    Bayar {idr(value.water_paid)}
+                  </p>
                   {value.water_due > 0 ? (
                     <p className="text-xs font-semibold text-[#dc2626]">
                       Tunggak {idr(value.water_due)}
