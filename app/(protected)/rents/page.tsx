@@ -2,8 +2,20 @@
 import * as React from "react";
 import { AuthGate } from "@/components/AuthGate";
 import { supabase } from "@/lib/supabase";
-import { currentPeriodISO } from "@/lib/period";
+import { currentPeriodISO, isoToMonth, monthToISOFirst } from "@/lib/period";
 import { idr } from "@/lib/format";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeaderCell,
+  TableRow,
+} from "@/components/ui/Table";
+import { Input } from "@/components/ui/Input";
 
 type RentRow = { id: string; house_id: string; code: string; amount: number; };
 
@@ -16,10 +28,12 @@ function nextPeriodISO(yyyyMm01: string): string {
 }
 
 function RentsPageInner() {
-  const [period,setPeriod] = React.useState(currentPeriodISO());
-  const [rows,setRows] = React.useState<RentRow[]>([]);
-  const [msg,setMsg] = React.useState<string|null>(null);
-  const np = React.useMemo(()=>nextPeriodISO(period), [period]);
+  const [period, setPeriod] = React.useState(currentPeriodISO());
+  const [rows, setRows] = React.useState<RentRow[]>([]);
+  const [msg, setMsg] = React.useState<string | null>(null);
+  const np = React.useMemo(() => nextPeriodISO(period), [period]);
+  const periodMonth = isoToMonth(period);
+  const nextPeriodMonth = isoToMonth(np);
 
   async function load() {
     const { data, error } = await supabase
@@ -46,34 +60,66 @@ function RentsPageInner() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <h1 className="text-xl font-semibold">Rents</h1>
-        <div className="ml-auto flex items-center gap-2">
-          <label className="text-sm text-neutral-600">Periode</label>
-          <input className="rounded-lg border px-2 py-1 text-sm" value={period} onChange={e=>setPeriod(e.target.value)} />
-          <button className="rounded-lg border px-3 py-1 text-sm" onClick={copyToNext}>Copy ke {np}</button>
+    <div className="page-stack">
+      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h1>Sewa</h1>
+          <p className="subtle">
+            Tarif sewa rumah untuk periode {periodMonth || "-"}
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="field-label" htmlFor="rents-period">
+            Periode
+          </label>
+          <Input
+            id="rents-period"
+            type="month"
+            value={periodMonth}
+            onChange={(e) => setPeriod(monthToISOFirst(e.target.value))}
+          />
+          <Button size="sm" variant="ghost" onClick={copyToNext}>
+            Salin ke {nextPeriodMonth || "-"}
+          </Button>
         </div>
       </div>
-      {msg && <p className="text-sm text-green-700">{msg}</p>}
-      <div className="rounded-xl border bg-white overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-neutral-50 text-neutral-600">
-              <tr><th className="px-3 py-2 text-left">Rumah</th><th className="px-3 py-2 text-left">Nominal</th></tr>
-            </thead>
-            <tbody>
-              {rows.map(r=>(
-                <tr key={r.house_id} className="border-t">
-                  <td className="px-3 py-2">{r.code}</td>
-                  <td className="px-3 py-2">{idr(r.amount)}</td>
-                </tr>
-              ))}
-              {rows.length===0 && (
-                <tr><td colSpan={2} className="px-3 py-6 text-center text-neutral-500">Tidak ada tarif untuk periode ini.</td></tr>
-              )}
-            </tbody>
-          </table>
-      </div>
+      {msg && (
+        <div className="card card-pad text-sm text-[var(--primary)]">
+          {msg}
+        </div>
+      )}
+      <TableContainer>
+        <Table className="text-sm">
+          <TableHead>
+            <TableRow>
+              <TableHeaderCell>Rumah</TableHeaderCell>
+              <TableHeaderCell className="text-right">Nominal</TableHeaderCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {rows.map((r) => (
+              <TableRow key={r.house_id}>
+                <TableCell className="font-medium text-[var(--ink)]">
+                  {r.code}
+                </TableCell>
+                <TableCell className="text-right font-semibold text-[var(--primary)]">
+                  {idr(r.amount)}
+                </TableCell>
+              </TableRow>
+            ))}
+            {rows.length === 0 && (
+              <TableRow>
+                <TableCell
+                  colSpan={2}
+                  className="py-6 text-center text-[var(--muted)]"
+                >
+                  Tidak ada tarif untuk periode ini.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </TableContainer>
     </div>
   );
 }

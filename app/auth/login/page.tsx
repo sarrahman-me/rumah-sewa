@@ -2,6 +2,9 @@
 import { useRouter } from "next/navigation";
 import { createClient } from "@supabase/supabase-js";
 import { useState } from "react";
+import { Input } from "@/components/ui/Input";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -26,39 +29,53 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex h-screen flex-col items-center justify-center bg-slate-50">
-      <form
-        onSubmit={handleSubmit}
-        className="w-80 space-y-4 rounded-lg bg-white p-6 shadow-md"
-      >
-        <h1 className="text-center text-xl font-semibold text-blue-700">
-          Masuk
-        </h1>
-        <input
-          name="email"
-          type="email"
-          placeholder="Email"
-          required
-          className="w-full rounded border border-blue-200 p-2"
-        />
-        <input
-          name="password"
-          type="password"
-          placeholder="Kata Sandi"
-          required
-          className="w-full rounded border border-blue-200 p-2"
-        />
-        {error && (
-          <p className="text-center text-sm text-red-500">{error}</p>
-        )}
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full rounded bg-blue-600 p-2 font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
-        >
-          {loading ? "Memeriksa..." : "Masuk"}
-        </button>
-      </form>
+    <main className="flex min-h-screen flex-col items-center justify-center px-4">
+      <Card className="w-full max-w-sm space-y-5">
+        <div className="space-y-1 text-center">
+          <h1>Masuk</h1>
+          <p className="subtle">Kelola pembayaran sewa dan air keluarga.</p>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="field-group">
+            <label className="field-label" htmlFor="email">
+              Email
+            </label>
+            <Input
+              id="email"
+              name="email"
+              type="email"
+              inputMode="email"
+              autoComplete="email"
+              placeholder="nama@contoh.com"
+              required
+            />
+          </div>
+          <div className="field-group">
+            <label className="field-label" htmlFor="password">
+              Kata sandi
+            </label>
+            <Input
+              id="password"
+              name="password"
+              type="password"
+              autoComplete="current-password"
+              placeholder="Masukkan kata sandi"
+              required
+            />
+          </div>
+          {error && (
+            <p className="text-center text-sm text-[var(--danger)]">{error}</p>
+          )}
+          <Button
+            type="submit"
+            disabled={loading}
+            className="w-full"
+            variant="primary"
+          >
+            {loading ? "Memeriksa..." : "Masuk"}
+          </Button>
+        </form>
+      </Card>
     </main>
   );
 }

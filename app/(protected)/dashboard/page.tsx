@@ -1,12 +1,31 @@
 "use client";
+
 import * as React from "react";
 import { AuthGate } from "@/components/AuthGate";
 import { supabase } from "@/lib/supabase";
-import { currentPeriodISO, monthToISOFirst, isoToMonth } from "@/lib/period";
+import { currentPeriodISO, isoToMonth, monthToISOFirst } from "@/lib/period";
 import { idr } from "@/lib/format";
-import { DetailDrawer } from "@/components/DetailDrawer";
+import { Button } from "@/components/ui/Button";
+import { Badge } from "@/components/ui/Badge";
+import { Card } from "@/components/ui/Card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableHeaderCell,
+  TableRow,
+  TableFooter,
+} from "@/components/ui/Table";
+import { Input } from "@/components/ui/Input";
+import { DateField } from "@/components/ui/DateField";
+import { Modal } from "@/components/ui/Modal";
+import { cx } from "@/components/ui/utils";
 
 type Mode = "single" | "range";
+type PaymentKind = "rent" | "water";
+type ActionType = "rent-full" | "water-full" | "rent-partial" | "water-partial";
 
 type RentStatus = {
   house_id: string;
@@ -37,58 +56,98 @@ type Row = {
   water_due: number;
 };
 
-type QuickFormState = {
-  houseId: string;
-  kind: "rent" | "water";
+type ActionModalState = {
+  type: ActionType;
+  house: Row;
   periodMonth: string;
   paidAt: string;
   amount: string;
   method: string;
   note: string;
-  label: string;
 };
 
-type UndoState = {
-  houseId: string;
+type UndoModalState = {
+  house: Row;
   periodMonth: string;
+  kind: PaymentKind;
+};
+
+type DetailModalState = {
+  house: Row;
 };
 
 const todayISO = new Date().toISOString().slice(0, 10);
+const allowOverpay =
+  typeof window !== "undefined" &&
+  (process.env.NEXT_PUBLIC_PAYMENTS_ALLOW_OVERPAY === "true" || false);
 
-function num(value: any) {
+function num(value: unknown) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function DashboardInner() {
-  const initialMonth = React.useMemo(
-    () => isoToMonth(currentPeriodISO()),
-    []
+function getActionLabel(type: ActionType) {
+  switch (type) {
+    case "rent-full":
+      return "Sewa Lunas";
+    case "water-full":
+      return "Air Lunas";
+    case "rent-partial":
+      return "Bayar Sewa Sebagian";
+    case "water-partial":
+      return "Bayar Air Sebagian";
+    default:
+      return "Pembayaran";
+  }
+}
+
+function typeToKind(type: ActionType): PaymentKind {
+  return type.startsWith("rent") ? "rent" : "water";
+}
+
+function stickyCellClass(extra?: string) {
+  return cx(
+    "sticky left-0 z-[2] bg-white",
+    "shadow-[1px_0_0_0_var(--border)]",
+    extra,
   );
+}
+
+type StatusMaps = {
+  rent: Record<string, Record<string, RentStatus>>;
+  water: Record<string, Record<string, WaterStatus>>;
+};
+
+function DashboardInner() {
+  const initialMonth = React.useMemo(() => isoToMonth(currentPeriodISO()), []);
   const [mode, setMode] = React.useState<Mode>("single");
   const [singleMonth, setSingleMonth] = React.useState(initialMonth);
   const [rangeFrom, setRangeFrom] = React.useState(initialMonth);
   const [rangeTo, setRangeTo] = React.useState(initialMonth);
   const [rows, setRows] = React.useState<Row[]>([]);
-  const [rentStatus, setRentStatus] = React.useState<
-    Record<string, Record<string, RentStatus>>
-  >({});
-  const [waterStatus, setWaterStatus] = React.useState<
-    Record<string, Record<string, WaterStatus>>
-  >({});
+  const [statusMaps, setStatusMaps] = React.useState<StatusMaps>({
+    rent: {},
+    water: {},
+  });
   const [loading, setLoading] = React.useState(false);
-  const [err, setErr] = React.useState<string | null>(null);
-  const [quickForm, setQuickForm] = React.useState<QuickFormState | null>(null);
-  const [undoState, setUndoState] = React.useState<UndoState | null>(null);
-  const [detailOpen, setDetailOpen] = React.useState(false);
-  const [detailHouse, setDetailHouse] = React.useState<{
-    id: string;
-    code: string;
-    owner: string;
-  } | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const [feedback, setFeedback] = React.useState<string | null>(null);
+
+  const [actionModal, setActionModal] = React.useState<ActionModalState | null>(
+    null,
+  );
+  const [undoModal, setUndoModal] = React.useState<UndoModalState | null>(null);
+  const [detailModal, setDetailModal] = React.useState<DetailModalState | null>(
+    null,
+  );
+  const [actionSubmitting, setActionSubmitting] = React.useState(false);
+  const [undoSubmitting, setUndoSubmitting] = React.useState(false);
+  const [isPending, startTransition] = React.useTransition();
 
   React.useEffect(() => {
-    if (rangeFrom > rangeTo) setRangeTo(rangeFrom);
+    if (rangeFrom > rangeTo) {
+      setRangeTo(rangeFrom);
+    }
   }, [rangeFrom, rangeTo]);
 
   const singlePeriodISO = monthToISOFirst(singleMonth);
@@ -97,10 +156,10 @@ function DashboardInner() {
   const isRange = mode === "range";
 
   const loadData = React.useCallback(async () => {
-    setErr(null);
+    setError(null);
     setLoading(true);
-    setQuickForm(null);
-    setUndoState(null);
+    setFeedback(null);
+
     const periodFilter =
       mode === "single"
         ? { eq: singlePeriodISO }
@@ -129,12 +188,18 @@ function DashboardInner() {
         .gte("period", periodFilter.gte)
         .lte("period", periodFilter.lte);
 
-    const [{ data: houses, error: housesErr }, { data: rentv, error: rentErr }, { data: waterv, error: waterErr }] =
-      await Promise.all([housesPromise, rentQuery, waterQuery]);
+    const [
+      { data: houses, error: housesErr },
+      { data: rentStatuses, error: rentErr },
+      { data: waterStatuses, error: waterErr },
+    ] = await Promise.all([housesPromise, rentQuery, waterQuery]);
 
     if (housesErr || rentErr || waterErr) {
-      setErr(
-        housesErr?.message || rentErr?.message || waterErr?.message || "Gagal memuat data."
+      setError(
+        housesErr?.message ||
+          rentErr?.message ||
+          waterErr?.message ||
+          "Gagal memuat data.",
       );
       setLoading(false);
       return;
@@ -156,57 +221,49 @@ function DashboardInner() {
       };
     });
 
-    const rentMap: Record<string, Record<string, RentStatus>> = {};
-    const waterMap: Record<string, Record<string, WaterStatus>> = {};
-    const skipped: { source: "rent" | "water"; house_id: string | null }[] = [];
+    const rentMap: StatusMaps["rent"] = {};
+    const waterMap: StatusMaps["water"] = {};
 
-    for (const r of rentv || []) {
-      const houseId = r.house_id;
-      if (!houseId || !base[houseId]) {
-        skipped.push({ source: "rent", house_id: houseId ?? null });
-        continue;
-      }
-      base[houseId].rent_bill += num(r.rent_bill);
-      base[houseId].rent_paid += num(r.rent_paid);
-      base[houseId].rent_due += num(r.rent_due);
+    for (const row of rentStatuses || []) {
+      const houseId = row.house_id;
+      if (!houseId || !base[houseId]) continue;
+      const bill = num(row.rent_bill);
+      const paid = num(row.rent_paid);
+      const due = num(row.rent_due);
+      base[houseId].rent_bill += bill;
+      base[houseId].rent_paid += paid;
+      base[houseId].rent_due += due;
       if (!rentMap[houseId]) rentMap[houseId] = {};
-      rentMap[houseId][r.period] = {
+      rentMap[houseId][row.period] = {
         house_id: houseId,
-        period: r.period,
-        rent_bill: num(r.rent_bill),
-        rent_paid: num(r.rent_paid),
-        rent_due: num(r.rent_due),
+        period: row.period,
+        rent_bill: bill,
+        rent_paid: paid,
+        rent_due: due,
       };
     }
 
-    for (const w of waterv || []) {
-      const houseId = w.house_id;
-      if (!houseId || !base[houseId]) {
-        skipped.push({ source: "water", house_id: houseId ?? null });
-        continue;
-      }
-      base[houseId].water_bill += num(w.water_bill);
-      base[houseId].water_paid += num(w.water_paid);
-      base[houseId].water_due += num(w.water_due);
+    for (const row of waterStatuses || []) {
+      const houseId = row.house_id;
+      if (!houseId || !base[houseId]) continue;
+      const bill = num(row.water_bill);
+      const paid = num(row.water_paid);
+      const due = num(row.water_due);
+      base[houseId].water_bill += bill;
+      base[houseId].water_paid += paid;
+      base[houseId].water_due += due;
       if (!waterMap[houseId]) waterMap[houseId] = {};
-      waterMap[houseId][w.period] = {
+      waterMap[houseId][row.period] = {
         house_id: houseId,
-        period: w.period,
-        water_bill: num(w.water_bill),
-        water_paid: num(w.water_paid),
-        water_due: num(w.water_due),
+        period: row.period,
+        water_bill: bill,
+        water_paid: paid,
+        water_due: due,
       };
     }
 
-    if (skipped.length > 0) {
-      console.warn("⚠️ Orphan rent/water rows:", skipped);
-    }
-
-    setRows(
-      Object.values(base).sort((a, b) => a.code.localeCompare(b.code))
-    );
-    setRentStatus(rentMap);
-    setWaterStatus(waterMap);
+    setRows(Object.values(base).sort((a, b) => a.code.localeCompare(b.code)));
+    setStatusMaps({ rent: rentMap, water: waterMap });
     setLoading(false);
   }, [mode, rangeFromISO, rangeToISO, singlePeriodISO]);
 
@@ -214,530 +271,1097 @@ function DashboardInner() {
     loadData();
   }, [loadData]);
 
-  function getDue(
-    kind: "rent" | "water",
+  const ownerRows = React.useMemo(
+    () => rows.filter((row) => !row.is_repair_fund),
+    [rows],
+  );
+  const rentTotals = React.useMemo(
+    () => ({
+      bill: ownerRows.reduce((sum, row) => sum + row.rent_bill, 0),
+      paid: ownerRows.reduce((sum, row) => sum + row.rent_paid, 0),
+      due: ownerRows.reduce((sum, row) => sum + row.rent_due, 0),
+    }),
+    [ownerRows],
+  );
+  const waterTotals = React.useMemo(
+    () => ({
+      bill: ownerRows.reduce((sum, row) => sum + row.water_bill, 0),
+      paid: ownerRows.reduce((sum, row) => sum + row.water_paid, 0),
+      due: ownerRows.reduce((sum, row) => sum + row.water_due, 0),
+    }),
+    [ownerRows],
+  );
+
+  const currentPeriodMonth = isRange ? rangeFrom : singleMonth;
+  const currentPeriodISOSelected = monthToISOFirst(currentPeriodMonth);
+
+  function getDueValue(
     houseId: string,
-    periodISO: string
+    kind: PaymentKind,
+    periodISO: string,
   ): number {
     if (kind === "rent") {
-      return num(rentStatus[houseId]?.[periodISO]?.rent_due);
+      return num(statusMaps.rent[houseId]?.[periodISO]?.rent_due);
     }
-    return num(waterStatus[houseId]?.[periodISO]?.water_due);
+    return num(statusMaps.water[houseId]?.[periodISO]?.water_due);
   }
 
-  function openQuickForm(
-    kind: "rent" | "water",
-    row: Row,
-    label: string,
-    presetAmount?: number
-  ) {
-    const periodMonth = isRange ? rangeFrom : singleMonth;
-    setQuickForm({
-      houseId: row.house_id,
-      kind,
+  function openAction(type: ActionType, house: Row) {
+    const periodMonth = currentPeriodMonth;
+    const paidAt = todayISO;
+    const kind = typeToKind(type);
+    const due = getDueValue(house.house_id, kind, currentPeriodISOSelected);
+    const amount =
+      type.endsWith("full") && due > 0 ? String(due.toFixed(0)) : "";
+    setActionModal({
+      type,
+      house,
       periodMonth,
-      paidAt: todayISO,
-      amount: presetAmount ? String(presetAmount) : "",
+      paidAt,
+      amount,
       method: "",
       note: "",
-      label,
     });
-    setUndoState(null);
   }
 
-  async function submitQuickForm() {
-    if (!quickForm) return;
-    const periodISO = monthToISOFirst(quickForm.periodMonth);
-    const amount = Number(quickForm.amount);
-    if (!amount || Number.isNaN(amount) || amount <= 0) {
-      alert("Nominal harus diisi dan lebih besar dari 0.");
+  function openUndo(house: Row) {
+    setUndoModal({
+      house,
+      periodMonth: currentPeriodMonth,
+      kind: "rent",
+    });
+  }
+
+  function openDetail(house: Row) {
+    setDetailModal({ house });
+  }
+
+  function closeModals() {
+    setActionModal(null);
+    setUndoModal(null);
+    setDetailModal(null);
+  }
+
+  function updateActionAmountForNewPeriod(periodMonth: string) {
+    if (!actionModal) return;
+    const periodISO = monthToISOFirst(periodMonth);
+    const kind = typeToKind(actionModal.type);
+    const due = getDueValue(actionModal.house.house_id, kind, periodISO);
+    setActionModal((prev) =>
+      prev
+        ? {
+            ...prev,
+            periodMonth,
+            amount:
+              prev.type.endsWith("full") && due > 0 ? String(due.toFixed(0)) : prev.amount,
+          }
+        : prev,
+    );
+  }
+
+  function optimisticApplyPayment(
+    houseId: string,
+    kind: PaymentKind,
+    periodISO: string,
+    amount: number,
+  ) {
+    setRows((prev) =>
+      prev.map((row) => {
+        if (row.house_id !== houseId) return row;
+        if (kind === "rent") {
+          const due = Math.max(row.rent_due - amount, 0);
+          return {
+            ...row,
+            rent_paid: row.rent_paid + amount,
+            rent_due: due,
+          };
+        }
+        const due = Math.max(row.water_due - amount, 0);
+        return {
+          ...row,
+          water_paid: row.water_paid + amount,
+          water_due: due,
+        };
+      }),
+    );
+
+    setStatusMaps((prev) => {
+      const next = { ...prev };
+      if (!next[kind][houseId]) {
+        next[kind][houseId] = {};
+      }
+      const map = { ...next[kind][houseId] };
+      const existing = { ...(map[periodISO] || {}) } as any;
+      if (kind === "rent") {
+        existing.house_id = houseId;
+        existing.period = periodISO;
+        existing.rent_bill = num(existing.rent_bill);
+        existing.rent_paid = num(existing.rent_paid) + amount;
+        existing.rent_due = Math.max(num(existing.rent_due) - amount, 0);
+      } else {
+        existing.house_id = houseId;
+        existing.period = periodISO;
+        existing.water_bill = num(existing.water_bill);
+        existing.water_paid = num(existing.water_paid) + amount;
+        existing.water_due = Math.max(num(existing.water_due) - amount, 0);
+      }
+      map[periodISO] = existing;
+      next[kind][houseId] = map;
+      return next;
+    });
+  }
+
+  async function handleSubmitPayment() {
+    if (!actionModal) return;
+    const kind = typeToKind(actionModal.type);
+    const periodISO = monthToISOFirst(actionModal.periodMonth);
+    const amountValue = Number(actionModal.amount);
+
+    if (!amountValue || Number.isNaN(amountValue) || amountValue <= 0) {
+      setFeedback("Nominal harus diisi dan lebih besar dari 0.");
       return;
     }
-    const due = getDue(quickForm.kind, quickForm.houseId, periodISO);
-    if (due > 0 && amount > due + 0.0001) {
-      const proceed = confirm(
-        "Nominal melebihi tunggakan. Lanjutkan tetap menyimpan?"
-      );
-      if (!proceed) return;
+
+    const dueValue = getDueValue(actionModal.house.house_id, kind, periodISO);
+    if (!allowOverpay && amountValue > dueValue + 0.0001) {
+      setFeedback("Nominal melebihi tunggakan yang tersisa.");
+      return;
     }
-    const payload: any = {
-      house_id: quickForm.houseId,
+
+    setActionSubmitting(true);
+    setFeedback(null);
+
+    const previousRows = rows;
+    const previousStatus = statusMaps;
+
+    optimisticApplyPayment(
+      actionModal.house.house_id,
+      kind,
+      periodISO,
+      amountValue,
+    );
+
+    const payload: Record<string, any> = {
+      house_id: actionModal.house.house_id,
       period: periodISO,
-      kind: quickForm.kind,
-      amount,
+      kind,
+      amount: amountValue,
     };
-    if (quickForm.paidAt) payload.paid_at = quickForm.paidAt;
-    if (quickForm.method) payload.method = quickForm.method;
-    if (quickForm.note) payload.note = quickForm.note;
+    if (actionModal.paidAt) payload.paid_at = actionModal.paidAt;
+    if (actionModal.method) payload.method = actionModal.method;
+    if (actionModal.note) payload.note = actionModal.note;
+
     const { error } = await supabase.from("payments").insert(payload);
+
     if (error) {
-      alert(error.message);
+      setRows(previousRows);
+      setStatusMaps(previousStatus);
+      setActionSubmitting(false);
+      setFeedback(error.message || "Gagal menyimpan pembayaran.");
       return;
     }
-    alert("Pembayaran tersimpan.");
-    setQuickForm(null);
-    await loadData();
+
+    setActionSubmitting(false);
+    setFeedback("Pembayaran berhasil disimpan.");
+    setActionModal(null);
+    startTransition(() => {
+      loadData();
+    });
   }
 
-  function openUndo(row: Row) {
-    const periodMonth = isRange ? rangeFrom : singleMonth;
-    setUndoState({ houseId: row.house_id, periodMonth });
-    setQuickForm(null);
-  }
-
-  async function triggerUndo(kind: "rent" | "water") {
-    if (!undoState) return;
-    const periodISO = monthToISOFirst(undoState.periodMonth);
+  async function handleUndo(kind: PaymentKind) {
+    if (!undoModal) return;
+    setUndoSubmitting(true);
+    setFeedback(null);
+    const periodISO = monthToISOFirst(undoModal.periodMonth);
     const { data, error } = await supabase.rpc("void_last_payment", {
-      p_house: undoState.houseId,
+      p_house: undoModal.house.house_id,
       p_period: periodISO,
       p_kind: kind,
-      p_reason: "undo via dashboard",
+      p_reason: "undo via dashboard modal",
     });
     if (error) {
-      alert(error.message);
+      setUndoSubmitting(false);
+      setFeedback(error.message || "Gagal membatalkan pembayaran.");
       return;
     }
     if (!data) {
-      alert("Tidak ada pembayaran untuk dibatalkan.");
+      setUndoSubmitting(false);
+      setFeedback("Tidak ada pembayaran untuk dibatalkan.");
       return;
     }
-    alert("Pembayaran terakhir dibatalkan.");
-    setUndoState(null);
-    await loadData();
-  }
-
-  function openDetail(row: Row) {
-    setDetailHouse({
-      id: row.house_id,
-      code: row.code,
-      owner: row.owner,
+    setUndoSubmitting(false);
+    setFeedback("Pembayaran terakhir dibatalkan.");
+    setUndoModal(null);
+    startTransition(() => {
+      loadData();
     });
-    setDetailOpen(true);
   }
 
-  const ownerRows = rows.filter((r) => !r.is_repair_fund);
-  const rentBillTotal = ownerRows.reduce((sum, r) => sum + r.rent_bill, 0);
-  const rentPaidTotal = ownerRows.reduce((sum, r) => sum + r.rent_paid, 0);
-  const rentDueTotal = ownerRows.reduce((sum, r) => sum + r.rent_due, 0);
-  const waterBillTotal = ownerRows.reduce((sum, r) => sum + r.water_bill, 0);
-  const waterPaidTotal = ownerRows.reduce((sum, r) => sum + r.water_paid, 0);
-  const waterDueTotal = ownerRows.reduce((sum, r) => sum + r.water_due, 0);
+  const tableCaption = "Status pembayaran sewa dan air untuk setiap rumah";
 
   return (
-    <AuthGate>
-      <div className="space-y-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-          <h1 className="text-2xl font-semibold text-blue-700">Dashboard</h1>
-          <div className="flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50/40 px-3 py-1 text-xs font-semibold text-blue-600 sm:ml-auto sm:text-sm">
-            <span>Mode:</span>
-            <button
-              type="button"
-              onClick={() => setMode("single")}
-              className={`rounded-full px-3 py-1 transition ${
-                mode === "single"
-                  ? "bg-blue-600 text-white shadow-sm"
-                  : "text-blue-600 hover:bg-blue-100/70"
-              }`}
-            >
-              Satu Periode
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode("range")}
-              className={`rounded-full px-3 py-1 transition ${
-                mode === "range"
-                  ? "bg-blue-600 text-white shadow-sm"
-                  : "text-blue-600 hover:bg-blue-100/70"
-              }`}
-            >
-              Rentang
-            </button>
+    <>
+      <div className="page-stack">
+        <div className="flex flex-col gap-2">
+          <h1 className="text-2xl font-semibold text-[var(--ink)]">Dashboard</h1>
+          <p className="text-sm text-[var(--muted)]">
+            Ringkasan status sewa &amp; air. Perbarui pembayaran melalui modal aksi.
+          </p>
+        </div>
+
+        <Card>
+          <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-start">
+            <div className="grid gap-3 md:grid-cols-2">
+              {mode === "single" ? (
+                <div className="field-group">
+                  <label className="field-label" htmlFor="period-single">
+                    Periode (bulan)
+                  </label>
+                  <Input
+                    id="period-single"
+                    type="month"
+                    value={singleMonth}
+                    onChange={(event) => setSingleMonth(event.target.value)}
+                  />
+                </div>
+              ) : (
+                <>
+                  <div className="field-group">
+                    <label className="field-label" htmlFor="range-from">
+                      Dari (bulan)
+                    </label>
+                    <Input
+                      id="range-from"
+                      type="month"
+                      value={rangeFrom}
+                      onChange={(event) => setRangeFrom(event.target.value)}
+                    />
+                  </div>
+                  <div className="field-group">
+                    <label className="field-label" htmlFor="range-to">
+                      Hingga (bulan)
+                    </label>
+                    <Input
+                      id="range-to"
+                      type="month"
+                      min={rangeFrom}
+                      value={rangeTo}
+                      onChange={(event) => setRangeTo(event.target.value)}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+            <div className="flex flex-col gap-3">
+              <span className="field-label">Mode tampilan</span>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant={mode === "single" ? "primary" : "ghost"}
+                  onClick={() => setMode("single")}
+                >
+                  Satu Periode
+                </Button>
+                <Button
+                  size="sm"
+                  variant={mode === "range" ? "primary" : "ghost"}
+                  onClick={() => setMode("range")}
+                >
+                  Rentang
+                </Button>
+              </div>
+            </div>
           </div>
-        </div>
+        </Card>
 
-        <div className="grid gap-4 rounded-xl border border-blue-100 bg-blue-50/30 p-4 text-sm text-slate-700 sm:grid-cols-2 lg:grid-cols-4">
-          {mode === "single" ? (
-            <label className="flex flex-col gap-1">
-              <span>Periode (bulan)</span>
-              <input
-                type="month"
-                value={singleMonth}
-                onChange={(e) => setSingleMonth(e.target.value)}
-                className="rounded-lg border border-blue-200 bg-white px-3 py-2"
-              />
-            </label>
-          ) : (
-            <>
-              <label className="flex flex-col gap-1">
-                <span>Dari (bulan)</span>
-                <input
-                  type="month"
-                  value={rangeFrom}
-                  onChange={(e) => setRangeFrom(e.target.value)}
-                  className="rounded-lg border border-blue-200 bg-white px-3 py-2"
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span>Hingga (bulan)</span>
-                <input
-                  type="month"
-                  value={rangeTo}
-                  min={rangeFrom}
-                  onChange={(e) => setRangeTo(e.target.value)}
-                  className="rounded-lg border border-blue-200 bg-white px-3 py-2"
-                />
-              </label>
-            </>
-          )}
-        </div>
-
-        {err && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
-            {err}
+        {feedback && (
+          <div className="card card-pad text-sm text-[var(--primary)]">
+            {feedback}
+          </div>
+        )}
+        {error && (
+          <div className="card card-pad border border-[var(--danger)] text-sm text-[var(--danger)]">
+            {error}
           </div>
         )}
 
-        <div className="overflow-x-auto rounded-2xl border border-blue-100 bg-white shadow-sm">
-          <table className="min-w-full text-sm sm:text-base">
-            <thead className="bg-blue-50/70 text-blue-600">
-              <tr>
-                <th className="px-4 py-3 text-left">Rumah</th>
-                <th className="px-4 py-3 text-left">Pemilik</th>
-                <th className="px-4 py-3 text-left">Sewa</th>
-                <th className="px-4 py-3 text-left">Air</th>
-                <th className="px-4 py-3 text-left">Aksi</th>
-              </tr>
-            </thead>
-            <tbody>
+        <div className="grid gap-3 sm:hidden">
+          {rows.map((row) => (
+            <MobileRowCard
+              key={row.house_id}
+              row={row}
+              onAction={openAction}
+              onUndo={openUndo}
+              onDetail={openDetail}
+            />
+          ))}
+          {!loading && rows.length === 0 && (
+            <Card>
+              <p className="text-center text-sm text-[var(--muted)]">
+                Tidak ada data untuk periode ini.
+              </p>
+            </Card>
+          )}
+          {loading && (
+            <Card>
+              <p className="text-center text-sm text-[var(--muted)]">
+                Memuat data...
+              </p>
+            </Card>
+          )}
+        </div>
+
+        <TableContainer className="hidden sm:block">
+          <Table className="text-sm">
+            <caption className="sr-only">{tableCaption}</caption>
+            <TableHead>
+              <TableRow>
+                <TableHeaderCell className={cx(stickyCellClass("px-4 py-3"))}>
+                  Rumah
+                </TableHeaderCell>
+                <TableHeaderCell className="px-4 py-3">Pemilik</TableHeaderCell>
+                <TableHeaderCell className="px-4 py-3">
+                  Sewa
+                </TableHeaderCell>
+                <TableHeaderCell className="px-4 py-3">
+                  Air
+                </TableHeaderCell>
+                <TableHeaderCell className="px-4 py-3 text-right">
+                  Aksi
+                </TableHeaderCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
               {loading && (
-                <tr>
-                  <td
+                <TableRow>
+                  <TableCell
                     colSpan={5}
-                    className="px-4 py-6 text-center text-sm text-slate-400"
+                    className="py-6 text-center text-[var(--muted)]"
                   >
-                    Memuat data…
-                  </td>
-                </tr>
+                    Memuat data...
+                  </TableCell>
+                </TableRow>
               )}
               {!loading &&
-                rows.map((row) => {
-                  const rentDueCurrent = getDue(
-                    "rent",
-                    row.house_id,
-                    isRange ? rangeFromISO : singlePeriodISO
-                  );
-                  const waterDueCurrent = getDue(
-                    "water",
-                    row.house_id,
-                    isRange ? rangeFromISO : singlePeriodISO
-                  );
-                  return (
-                    <tr key={row.house_id} className="border-t border-blue-100">
-                      <td className="px-4 py-3 font-semibold text-slate-800">
-                        {row.code}
-                      </td>
-                      <td className="px-4 py-3 text-slate-600">{row.owner}</td>
-                      <td className="px-4 py-3">
-                        {idr(row.rent_bill)} / {idr(row.rent_paid)} /{" "}
-                        <span
-                          className={
-                            row.rent_due > 0 ? "text-red-600 font-semibold" : ""
-                          }
-                        >
-                          {idr(row.rent_due)}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        {idr(row.water_bill)} / {idr(row.water_paid)} /{" "}
-                        <span
-                          className={
-                            row.water_due > 0
-                              ? "text-red-600 font-semibold"
-                              : ""
-                          }
-                        >
-                          {idr(row.water_due)}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-col flex-wrap gap-2 sm:flex-row sm:items-center sm:justify-end">
-                          <button
-                            type="button"
-                            className="rounded-lg bg-blue-600 px-3 py-1 text-xs font-semibold text-white transition hover:bg-blue-700"
-                            onClick={() =>
-                              openQuickForm(
-                                "rent",
-                                row,
-                                "Bayar Sewa Lunas",
-                                rentDueCurrent > 0 ? rentDueCurrent : undefined
-                              )
-                            }
-                          >
-                            Sewa Lunas ({idr(rentDueCurrent)})
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded-lg bg-blue-600 px-3 py-1 text-xs font-semibold text-white transition hover:bg-blue-700"
-                            onClick={() =>
-                              openQuickForm(
-                                "water",
-                                row,
-                                "Bayar Air Lunas",
-                                waterDueCurrent > 0 ? waterDueCurrent : undefined
-                              )
-                            }
-                          >
-                            Air Lunas ({idr(waterDueCurrent)})
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded-lg border border-blue-200 px-3 py-1 text-xs font-semibold text-blue-600 transition hover:bg-blue-50"
-                            onClick={() =>
-                              openQuickForm(
-                                "rent",
-                                row,
-                                "Bayar Sewa Sebagian",
-                                rentDueCurrent > 0 ? rentDueCurrent : undefined
-                              )
-                            }
-                          >
-                            Bayar Sewa Sebagian
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded-lg border border-blue-200 px-3 py-1 text-xs font-semibold text-blue-600 transition hover:bg-blue-50"
-                            onClick={() =>
-                              openQuickForm(
-                                "water",
-                                row,
-                                "Bayar Air Sebagian",
-                                waterDueCurrent > 0 ? waterDueCurrent : undefined
-                              )
-                            }
-                          >
-                            Bayar Air Sebagian
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded-lg border border-blue-200 px-3 py-1 text-xs font-semibold text-blue-600 transition hover:bg-blue-50"
-                            onClick={() => openUndo(row)}
-                          >
-                            Undo Terakhir
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded-lg border border-blue-200 px-3 py-1 text-xs font-semibold text-blue-600 transition hover:bg-blue-50"
-                            onClick={() => openDetail(row)}
-                          >
-                            Detail
-                          </button>
-                        </div>
-                        {quickForm && quickForm.houseId === row.house_id && (
-                          <div className="mt-3 grid gap-2 rounded-xl border border-blue-100 bg-blue-50/50 p-3 text-xs text-slate-600 sm:text-sm">
-                            <p className="font-semibold text-blue-700">
-                              {quickForm.label}
-                            </p>
-                            <label className="grid gap-1">
-                              <span>Periode</span>
-                              <input
-                                type="month"
-                                value={quickForm.periodMonth}
-                                readOnly={!isRange}
-                                onChange={(e) =>
-                                  setQuickForm((prev) =>
-                                    prev
-                                      ? { ...prev, periodMonth: e.target.value }
-                                      : prev
-                                  )
-                                }
-                                className="rounded-lg border border-blue-200 bg-white px-2 py-1"
-                              />
-                            </label>
-                            <label className="grid gap-1">
-                              <span>Tanggal Bayar</span>
-                              <input
-                                type="date"
-                                value={quickForm.paidAt}
-                                max={todayISO}
-                                onChange={(e) =>
-                                  setQuickForm((prev) =>
-                                    prev
-                                      ? { ...prev, paidAt: e.target.value }
-                                      : prev
-                                  )
-                                }
-                                className="rounded-lg border border-blue-200 bg-white px-2 py-1"
-                              />
-                            </label>
-                            <label className="grid gap-1">
-                              <span>Nominal</span>
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                value={quickForm.amount}
-                                onChange={(e) =>
-                                  setQuickForm((prev) =>
-                                    prev
-                                      ? { ...prev, amount: e.target.value }
-                                      : prev
-                                  )
-                                }
-                                className="rounded-lg border border-blue-200 bg-white px-2 py-1"
-                              />
-                            </label>
-                            <label className="grid gap-1">
-                              <span>Metode (opsional)</span>
-                              <input
-                                type="text"
-                                value={quickForm.method}
-                                onChange={(e) =>
-                                  setQuickForm((prev) =>
-                                    prev
-                                      ? { ...prev, method: e.target.value }
-                                      : prev
-                                  )
-                                }
-                                className="rounded-lg border border-blue-200 bg-white px-2 py-1"
-                                placeholder="Transfer, Tunai, dll"
-                              />
-                            </label>
-                            <label className="grid gap-1">
-                              <span>Catatan (opsional)</span>
-                              <input
-                                type="text"
-                                value={quickForm.note}
-                                onChange={(e) =>
-                                  setQuickForm((prev) =>
-                                    prev
-                                      ? { ...prev, note: e.target.value }
-                                      : prev
-                                  )
-                                }
-                                className="rounded-lg border border-blue-200 bg-white px-2 py-1"
-                                placeholder="Catatan internal"
-                              />
-                            </label>
-                            <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:items-center sm:justify-end">
-                              <button
-                                type="button"
-                                className="rounded-lg bg-blue-600 px-3 py-1 text-xs font-semibold text-white transition hover:bg-blue-700"
-                                onClick={submitQuickForm}
-                              >
-                                Simpan
-                              </button>
-                              <button
-                                type="button"
-                                className="rounded-lg border border-blue-200 px-3 py-1 text-xs font-semibold text-blue-600 transition hover:bg-blue-50"
-                                onClick={() => setQuickForm(null)}
-                              >
-                                Batal
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                        {undoState && undoState.houseId === row.house_id && (
-                          <div className="mt-3 grid gap-2 rounded-xl border border-blue-100 bg-blue-50/40 p-3 text-xs text-slate-600 sm:text-sm">
-                            <p className="font-semibold text-blue-700">
-                              Undo Pembayaran Terakhir
-                            </p>
-                            <label className="grid gap-1">
-                              <span>Periode</span>
-                              <input
-                                type="month"
-                                value={undoState.periodMonth}
-                                min={rangeFrom}
-                                max={rangeTo}
-                                onChange={(e) =>
-                                  setUndoState((prev) =>
-                                    prev
-                                      ? { ...prev, periodMonth: e.target.value }
-                                      : prev
-                                  )
-                                }
-                                className="rounded-lg border border-blue-200 bg-white px-2 py-1"
-                              />
-                            </label>
-                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-                              <button
-                                type="button"
-                                className="rounded-lg border border-blue-200 px-3 py-1 text-xs font-semibold text-blue-600 transition hover:bg-blue-50"
-                                onClick={() => triggerUndo("rent")}
-                              >
-                                Undo Sewa
-                              </button>
-                              <button
-                                type="button"
-                                className="rounded-lg border border-blue-200 px-3 py-1 text-xs font-semibold text-blue-600 transition hover:bg-blue-50"
-                                onClick={() => triggerUndo("water")}
-                              >
-                                Undo Air
-                              </button>
-                              <button
-                                type="button"
-                                className="rounded-lg border border-blue-200 px-3 py-1 text-xs font-semibold text-blue-600 transition hover:bg-blue-50"
-                                onClick={() => setUndoState(null)}
-                              >
-                                Tutup
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
+                rows.map((row) => (
+                  <DashboardRowTable
+                    key={row.house_id}
+                    row={row}
+                    onAction={openAction}
+                    onUndo={openUndo}
+                    onDetail={openDetail}
+                  />
+                ))}
               {!loading && rows.length === 0 && (
-                <tr>
-                  <td
+                <TableRow>
+                  <TableCell
                     colSpan={5}
-                    className="px-4 py-6 text-center text-sm text-slate-400"
+                    className="py-6 text-center text-[var(--muted)]"
                   >
-                    Tidak ada data.
-                  </td>
-                </tr>
+                    Tidak ada data untuk periode ini.
+                  </TableCell>
+                </TableRow>
               )}
-              {rows.length > 0 && (
-                <tr className="border-t border-blue-100 bg-blue-50/40 font-semibold text-blue-700">
-                  <td className="px-4 py-3" colSpan={2}>
-                    Total
-                  </td>
-                  <td className="px-4 py-3">
-                    {idr(rentBillTotal)} / {idr(rentPaidTotal)} /{" "}
-                    <span className={rentDueTotal > 0 ? "text-red-600" : ""}>
-                      {idr(rentDueTotal)}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    {idr(waterBillTotal)} / {idr(waterPaidTotal)} /{" "}
-                    <span className={waterDueTotal > 0 ? "text-red-600" : ""}>
-                      {idr(waterDueTotal)}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3" />
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+            </TableBody>
+            <TableFooter>
+              <TableRow className="bg-[#eef2ff] font-medium text-[var(--primary)]">
+                <TableCell className={cx(stickyCellClass("px-4 py-3"))}>
+                  Total
+                </TableCell>
+                <TableCell className="px-4 py-3" />
+                <TableCell className="px-4 py-3">
+                  <TotalsCell
+                    label="Sewa"
+                    bill={rentTotals.bill}
+                    paid={rentTotals.paid}
+                    due={rentTotals.due}
+                  />
+                </TableCell>
+                <TableCell className="px-4 py-3">
+                  <TotalsCell
+                    label="Air"
+                    bill={waterTotals.bill}
+                    paid={waterTotals.paid}
+                    due={waterTotals.due}
+                  />
+                </TableCell>
+                <TableCell className="px-4 py-3" />
+              </TableRow>
+            </TableFooter>
+          </Table>
+        </TableContainer>
       </div>
-      <DetailDrawer
-        open={detailOpen}
-        onClose={() => setDetailOpen(false)}
-        house={detailHouse}
-        mode={mode}
-        singlePeriodISO={singlePeriodISO}
-        range={{ from: rangeFromISO, to: rangeToISO }}
-        rentStatus={rentStatus}
-        waterStatus={waterStatus}
-        onRefresh={loadData}
-      />
-    </AuthGate>
+      <Modal
+        open={!!actionModal}
+        onOpenChange={(open) => {
+          if (!open) setActionModal(null);
+        }}
+        title={actionModal ? getActionLabel(actionModal.type) : undefined}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setActionModal(null)}>
+              Batal
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleSubmitPayment}
+              disabled={actionSubmitting || isPending}
+            >
+              {actionSubmitting ? "Menyimpan..." : "Simpan Pembayaran"}
+            </Button>
+          </>
+        }
+      >
+        {actionModal && (
+          <>
+            <div className="flex flex-col gap-1">
+              <p className="text-sm font-semibold text-[var(--ink)]">
+                {actionModal.house.code} · {actionModal.house.owner}
+              </p>
+              <p className="text-xs text-[var(--muted)]">
+                Periode bawaan: {isRange ? `${rangeFrom} → ${rangeTo}` : singleMonth}
+              </p>
+            </div>
+            <div className="grid gap-4">
+              <div className="field-group">
+                <label className="field-label" htmlFor="modal-period">
+                  Periode
+                </label>
+                <Input
+                  id="modal-period"
+                  type="month"
+                  value={actionModal.periodMonth}
+                  readOnly={!isRange}
+                  disabled={!isRange}
+                  onChange={(event) =>
+                    updateActionAmountForNewPeriod(event.target.value)
+                  }
+                />
+              </div>
+              <div className="field-group">
+                <label className="field-label" htmlFor="modal-date">
+                  Tanggal bayar
+                </label>
+                <DateField
+                  id="modal-date"
+                  value={actionModal.paidAt}
+                  max={todayISO}
+                  onChange={(event) =>
+                    setActionModal((prev) =>
+                      prev ? { ...prev, paidAt: event.target.value } : prev,
+                    )
+                  }
+                />
+              </div>
+              <div className="field-group">
+                <label className="field-label" htmlFor="modal-amount">
+                  Nominal
+                </label>
+                <Input
+                  id="modal-amount"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  className="tabular-nums"
+                  value={actionModal.amount}
+                  onChange={(event) =>
+                    setActionModal((prev) =>
+                      prev ? { ...prev, amount: event.target.value } : prev,
+                    )
+                  }
+                />
+              </div>
+              <div className="field-group">
+                <label className="field-label" htmlFor="modal-method">
+                  Metode (opsional)
+                </label>
+                <Input
+                  id="modal-method"
+                  value={actionModal.method}
+                  onChange={(event) =>
+                    setActionModal((prev) =>
+                      prev ? { ...prev, method: event.target.value } : prev,
+                    )
+                  }
+                  placeholder="Transfer, Tunai, dsb."
+                />
+              </div>
+              <div className="field-group">
+                <label className="field-label" htmlFor="modal-note">
+                  Catatan (opsional)
+                </label>
+                <Input
+                  id="modal-note"
+                  value={actionModal.note}
+                  onChange={(event) =>
+                    setActionModal((prev) =>
+                      prev ? { ...prev, note: event.target.value } : prev,
+                    )
+                  }
+                  placeholder="Catatan internal"
+                />
+              </div>
+            </div>
+          </>
+        )}
+      </Modal>
+
+      <Modal
+        open={!!undoModal}
+        onOpenChange={(open) => {
+          if (!open) setUndoModal(null);
+        }}
+        title="Undo pembayaran terakhir"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setUndoModal(null)}>
+              Tutup
+            </Button>
+            <Button
+              variant="primaryOutline"
+              onClick={() => undoModal && handleUndo(undoModal.kind)}
+              disabled={undoSubmitting || isPending}
+            >
+              {undoSubmitting ? "Memproses..." : "Undo Terakhir"}
+            </Button>
+          </>
+        }
+      >
+        {undoModal && (
+          <>
+            <div className="flex flex-col gap-1">
+              <p className="text-sm font-semibold text-[var(--ink)]">
+                {undoModal.house.code} · {undoModal.house.owner}
+              </p>
+              <p className="text-xs text-[var(--muted)]">
+                Pilih periode dan jenis pembayaran yang ingin dibatalkan.
+              </p>
+            </div>
+            <div className="field-group">
+              <label className="field-label" htmlFor="undo-period">
+                Periode
+              </label>
+              <Input
+                id="undo-period"
+                type="month"
+                value={undoModal.periodMonth}
+                readOnly={!isRange}
+                disabled={!isRange}
+                min={rangeFrom}
+                max={rangeTo}
+                onChange={(event) =>
+                  setUndoModal((prev) =>
+                    prev ? { ...prev, periodMonth: event.target.value } : prev,
+                  )
+                }
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant={undoModal.kind === "rent" ? "primary" : "ghost"}
+                size="sm"
+                onClick={() =>
+                  setUndoModal((prev) =>
+                    prev ? { ...prev, kind: "rent" } : prev,
+                  )
+                }
+              >
+                Sewa
+              </Button>
+              <Button
+                variant={undoModal.kind === "water" ? "primary" : "ghost"}
+                size="sm"
+                onClick={() =>
+                  setUndoModal((prev) =>
+                    prev ? { ...prev, kind: "water" } : prev,
+                  )
+                }
+              >
+                Air
+              </Button>
+            </div>
+          </>
+        )}
+      </Modal>
+      <Modal
+        open={!!detailModal}
+        onOpenChange={(open) => {
+          if (!open) setDetailModal(null);
+        }}
+        title="Ringkasan detail"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setDetailModal(null)}>
+              Tutup
+            </Button>
+          </>
+        }
+      >
+        {detailModal && (
+          <>
+            <div className="flex flex-col gap-1">
+              <p className="text-sm font-semibold text-[var(--ink)]">
+                {detailModal.house.code} · {detailModal.house.owner}
+              </p>
+              <p className="text-xs text-[var(--muted)]">
+                Menampilkan status per periode dalam rentang terpilih.
+              </p>
+            </div>
+            <DetailBreakdown
+              map={statusMaps}
+              houseId={detailModal.house.house_id}
+              range={{ from: rangeFromISO, to: rangeToISO }}
+              mode={mode}
+              single={singlePeriodISO}
+            />
+          </>
+        )}
+      </Modal>
+    </>
   );
 }
 
-export default function Dashboard() {
+type RowActionHandlers = {
+  onAction: (type: ActionType, row: Row) => void;
+  onUndo: (row: Row) => void;
+  onDetail: (row: Row) => void;
+};
+
+const DashboardRowTable = React.memo(function DashboardRowTable({
+  row,
+  onAction,
+  onUndo,
+  onDetail,
+}: { row: Row } & RowActionHandlers) {
+  return (
+    <TableRow className="align-top">
+      <TableCell className={cx(stickyCellClass("px-4 py-3 font-semibold"))}>
+        {row.code}
+      </TableCell>
+      <TableCell className="px-4 py-3">
+        <div className="flex flex-col gap-1">
+          <span>{row.owner}</span>
+          {row.is_repair_fund && (
+            <Badge variant="warningSoft">Dana Perbaikan</Badge>
+          )}
+        </div>
+      </TableCell>
+      <TableCell className="px-4 py-3">
+        <StatusStack
+          bill={row.rent_bill}
+          paid={row.rent_paid}
+          due={row.rent_due}
+        />
+      </TableCell>
+      <TableCell className="px-4 py-3">
+        <StatusStack
+          bill={row.water_bill}
+          paid={row.water_paid}
+          due={row.water_due}
+        />
+      </TableCell>
+      <TableCell className="px-4 py-3 text-right">
+        <RowActions row={row} onAction={onAction} onUndo={onUndo} onDetail={onDetail} />
+      </TableCell>
+    </TableRow>
+  );
+});
+
+const MobileRowCard = React.memo(function MobileRowCard({
+  row,
+  onAction,
+  onUndo,
+  onDetail,
+}: { row: Row } & RowActionHandlers) {
+  return (
+    <Card padded={false}>
+      <div className="card-pad flex flex-col gap-3">
+        <div className="flex items-start justify-between">
+          <div>
+            <p className="text-sm font-semibold text-[var(--ink)]">{row.code}</p>
+            <p className="text-sm text-[var(--muted)]">{row.owner}</p>
+            {row.is_repair_fund && (
+              <div className="mt-1">
+                <Badge variant="warningSoft">Dana Perbaikan</Badge>
+              </div>
+            )}
+          </div>
+          <RowMenu row={row} onUndo={onUndo} onDetail={onDetail} />
+        </div>
+        <div className="grid gap-3">
+          <div>
+            <p className="text-xs font-medium text-[var(--muted)]">Sewa</p>
+            <StatusStack
+              bill={row.rent_bill}
+              paid={row.rent_paid}
+              due={row.rent_due}
+            />
+          </div>
+          <div>
+            <p className="text-xs font-medium text-[var(--muted)]">Air</p>
+            <StatusStack
+              bill={row.water_bill}
+              paid={row.water_paid}
+              due={row.water_due}
+            />
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="primary"
+            onClick={() => onAction("rent-full", row)}
+          >
+            Sewa Lunas
+          </Button>
+          <Button
+            size="sm"
+            variant="primaryOutline"
+            onClick={() => onAction("water-full", row)}
+          >
+            Air Lunas
+          </Button>
+          <PartialMenu row={row} onAction={onAction} />
+        </div>
+      </div>
+    </Card>
+  );
+});
+
+function StatusStack({
+  bill,
+  paid,
+  due,
+}: {
+  bill: number;
+  paid: number;
+  due: number;
+}) {
+  const dueRounded = Number(due.toFixed(0));
+  const showBadge = dueRounded <= 0;
+  return (
+    <div className="flex flex-col gap-1 text-xs">
+      <span className="text-[var(--muted)]">
+        Tagih <span className="tabular-nums text-[var(--ink)]">{idr(bill)}</span>
+      </span>
+      <span className="text-[var(--muted)]">
+        Bayar{" "}
+        <span className="tabular-nums font-semibold text-[#047857]">
+          {idr(paid)}
+        </span>
+      </span>
+      <span className="text-[var(--muted)]">
+        Tunggak{" "}
+        {showBadge ? (
+          <Badge variant="success">Lunas</Badge>
+        ) : (
+          <span className="tabular-nums font-semibold text-[#dc2626]">
+            {idr(due)}
+          </span>
+        )}
+      </span>
+    </div>
+  );
+}
+
+function TotalsCell({
+  label,
+  bill,
+  paid,
+  due,
+}: {
+  label: string;
+  bill: number;
+  paid: number;
+  due: number;
+}) {
+  const showBadge = Number(due.toFixed(0)) <= 0;
+  return (
+    <div className="flex flex-col gap-1 text-xs">
+      <span className="font-medium text-[var(--muted)]">{label}</span>
+      <span className="text-[var(--muted)]">
+        Tagih <span className="tabular-nums text-[var(--ink)]">{idr(bill)}</span>
+      </span>
+      <span className="text-[var(--muted)]">
+        Bayar{" "}
+        <span className="tabular-nums font-semibold text-[#047857]">
+          {idr(paid)}
+        </span>
+      </span>
+      <span className="text-[var(--muted)]">
+        Tunggak{" "}
+        {showBadge ? (
+          <Badge variant="success">Lunas</Badge>
+        ) : (
+          <span className="tabular-nums font-semibold text-[#dc2626]">
+            {idr(due)}
+          </span>
+        )}
+      </span>
+    </div>
+  );
+}
+
+function RowActions({ row, onAction, onUndo, onDetail }: { row: Row } & RowActionHandlers) {
+  return (
+    <div className="flex items-center justify-end gap-2">
+      <Button size="sm" variant="primary" onClick={() => onAction("rent-full", row)}>
+        Sewa Lunas
+      </Button>
+      <Button
+        size="sm"
+        variant="primaryOutline"
+        onClick={() => onAction("water-full", row)}
+      >
+        Air Lunas
+      </Button>
+      <PartialMenu row={row} onAction={onAction} />
+      <RowMenu row={row} onUndo={onUndo} onDetail={onDetail} />
+    </div>
+  );
+}
+
+function PartialMenu({
+  row,
+  onAction,
+}: {
+  row: Row;
+  onAction: (type: ActionType, row: Row) => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const menuRef = React.useRef<HTMLDivElement | null>(null);
+
+  React.useEffect(() => {
+    function handleClick(event: MouseEvent) {
+      if (!menuRef.current) return;
+      if (!menuRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    if (open) {
+      document.addEventListener("mousedown", handleClick);
+    }
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={menuRef}>
+      <Button
+        size="sm"
+        variant="ghost"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        Bayar Sebagian ▾
+      </Button>
+      {open && (
+        <div className="absolute right-0 z-30 mt-2 w-40 rounded-[var(--radius)] border border-[var(--border)] bg-white p-1 shadow-lg">
+          <button
+            type="button"
+            className="w-full rounded-[var(--radius)] px-3 py-2 text-left text-sm hover:bg-[#eef2ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
+            onClick={() => {
+              onAction("rent-partial", row);
+              setOpen(false);
+            }}
+          >
+            Sewa
+          </button>
+          <button
+            type="button"
+            className="w-full rounded-[var(--radius)] px-3 py-2 text-left text-sm hover:bg-[#eef2ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
+            onClick={() => {
+              onAction("water-partial", row);
+              setOpen(false);
+            }}
+          >
+            Air
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RowMenu({
+  row,
+  onUndo,
+  onDetail,
+}: {
+  row: Row;
+  onUndo: (row: Row) => void;
+  onDetail: (row: Row) => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const menuRef = React.useRef<HTMLDivElement | null>(null);
+
+  React.useEffect(() => {
+    function handleClick(event: MouseEvent) {
+      if (!menuRef.current) return;
+      if (!menuRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    if (open) document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  return (
+    <div className="relative" ref={menuRef}>
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Menu baris"
+        className="btn btn-outline btn-sm px-2"
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        ⋯
+      </button>
+      {open && (
+        <div className="absolute right-0 z-30 mt-2 min-w-[160px] rounded-[var(--radius)] border border-[var(--border)] bg-white p-1 shadow-lg">
+          <button
+            type="button"
+            className="w-full rounded-[var(--radius)] px-3 py-2 text-left text-sm hover:bg-[#eef2ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
+            onClick={() => {
+              onUndo(row);
+              setOpen(false);
+            }}
+          >
+            Undo Terakhir
+          </button>
+          <button
+            type="button"
+            className="w-full rounded-[var(--radius)] px-3 py-2 text-left text-sm hover:bg-[#eef2ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
+            onClick={() => {
+              onDetail(row);
+              setOpen(false);
+            }}
+          >
+            Detail
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DetailBreakdown({
+  map,
+  houseId,
+  range,
+  mode,
+  single,
+}: {
+  map: StatusMaps;
+  houseId: string;
+  range: { from: string; to: string };
+  mode: Mode;
+  single: string;
+}) {
+  const rentEntries = React.useMemo(() => {
+    const entries = Object.entries(map.rent[houseId] || {});
+    return entries
+      .filter(([period]) =>
+        mode === "single"
+          ? period === single
+          : period >= range.from && period <= range.to,
+      )
+      .sort(([a], [b]) => (a > b ? 1 : -1));
+  }, [map.rent, houseId, mode, range.from, range.to, single]);
+
+  const waterEntries = React.useMemo(() => {
+    const entries = Object.entries(map.water[houseId] || {});
+    return entries
+      .filter(([period]) =>
+        mode === "single"
+          ? period === single
+          : period >= range.from && period <= range.to,
+      )
+      .sort(([a], [b]) => (a > b ? 1 : -1));
+  }, [map.water, houseId, mode, range.from, range.to, single]);
+
+  if (rentEntries.length === 0 && waterEntries.length === 0) {
+    return (
+      <p className="text-sm text-[var(--muted)]">
+        Tidak ada data detail untuk rentang yang dipilih.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {rentEntries.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="text-sm font-semibold text-[var(--ink)]">
+            Sewa per periode
+          </h3>
+          <ul className="space-y-1 text-sm">
+            {rentEntries.map(([period, value]) => (
+              <li
+                key={period}
+                className="flex items-center justify-between rounded-[var(--radius)] border border-[var(--border)] px-3 py-2"
+              >
+                <div>
+                  <p className="font-medium text-[var(--ink)]">
+                    {isoToMonth(period)}
+                  </p>
+                  <p className="text-xs text-[var(--muted)]">Tagih {idr(value.rent_bill)}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-[#047857]">Bayar {idr(value.rent_paid)}</p>
+                  {value.rent_due > 0 ? (
+                    <p className="text-xs font-semibold text-[#dc2626]">
+                      Tunggak {idr(value.rent_due)}
+                    </p>
+                  ) : (
+                    <Badge variant="success">Lunas</Badge>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {waterEntries.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="text-sm font-semibold text-[var(--ink)]">
+            Air per periode
+          </h3>
+          <ul className="space-y-1 text-sm">
+            {waterEntries.map(([period, value]) => (
+              <li
+                key={period}
+                className="flex items-center justify-between rounded-[var(--radius)] border border-[var(--border)] px-3 py-2"
+              >
+                <div>
+                  <p className="font-medium text-[var(--ink)]">
+                    {isoToMonth(period)}
+                  </p>
+                  <p className="text-xs text-[var(--muted)]">Tagih {idr(value.water_bill)}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-[#047857]">Bayar {idr(value.water_paid)}</p>
+                  {value.water_due > 0 ? (
+                    <p className="text-xs font-semibold text-[#dc2626]">
+                      Tunggak {idr(value.water_due)}
+                    </p>
+                  ) : (
+                    <Badge variant="success">Lunas</Badge>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function DashboardPage() {
   return (
     <AuthGate>
       <DashboardInner />
