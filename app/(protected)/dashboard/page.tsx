@@ -76,6 +76,13 @@ type DetailModalState = {
   house: Row;
 };
 
+type OccupancyModalState = {
+  house: Row;
+  periodMonth: string;
+  status: "kosong" | "terisi";
+  note: string;
+};
+
 const todayISO = new Date().toISOString().slice(0, 10);
 const allowOverpay =
   typeof window !== "undefined" &&
@@ -161,12 +168,8 @@ function DashboardInner() {
   const [detailModal, setDetailModal] = React.useState<DetailModalState | null>(
     null,
   );
-  const [occupancyModal, setOccupancyModal] = React.useState<{
-    house: Row;
-    periodMonth: string;
-    status: "vacant" | "occupied";
-    note: string;
-  } | null>(null);
+  const [occupancyModal, setOccupancyModal] =
+    React.useState<OccupancyModalState | null>(null);
   const [actionSubmitting, setActionSubmitting] = React.useState(false);
   const [undoSubmitting, setUndoSubmitting] = React.useState(false);
   const [isPending, startTransition] = React.useTransition();
@@ -382,7 +385,7 @@ function DashboardInner() {
     setOccupancyModal({
       house,
       periodMonth,
-      status: vacant ? "vacant" : "occupied",
+      status: vacant ? "kosong" : "terisi",
       note: "",
     });
   }
@@ -405,33 +408,43 @@ function DashboardInner() {
     });
   }
 
-    async function saveOccupancy() {
+  async function handleSubmitOccupancy() {
     if (!occupancyModal) return;
     const periodISO = monthToISOFirst(occupancyModal.periodMonth);
-    setFeedback(null);
-    const payload = {
-      house_id: occupancyModal.house.house_id,
-      period: periodISO,
-      note: occupancyModal.note ? occupancyModal.note : null,
-    };
-    if (occupancyModal.status === "vacant") {
-      await supabase
+    let errorMessage: string | null = null;
+
+    if (occupancyModal.status === "kosong") {
+      const { error } = await supabase
         .from("house_vacancies")
-        .upsert(payload, { onConflict: "house_id,period" });
+        .upsert(
+          {
+            house_id: occupancyModal.house.house_id,
+            period: periodISO,
+            note: occupancyModal.note || null,
+          },
+          { onConflict: "house_id,period" },
+        );
+      if (error) errorMessage = error.message;
     } else {
-      await supabase
+      const { error } = await supabase
         .from("house_vacancies")
         .delete()
         .eq("house_id", occupancyModal.house.house_id)
         .eq("period", periodISO);
+      if (error) errorMessage = error.message;
     }
+
+    if (errorMessage) {
+      setFeedback(errorMessage || "Gagal menyimpan status hunian.");
+      return;
+    }
+
+    setFeedback("Status hunian disimpan.");
     setOccupancyModal(null);
-    setFeedback("Status hunian diperbarui.");
     startTransition(() => {
       loadData();
     });
   }
-
 function openUndo(house: Row) {
     setUndoModal({
       house,
@@ -1058,10 +1071,7 @@ function openUndo(house: Row) {
             <Button variant="ghost" onClick={() => setOccupancyModal(null)}>
               Batal
             </Button>
-            <Button
-              variant="primary"
-              onClick={saveOccupancy}
-            >
+            <Button variant="primary" onClick={handleSubmitOccupancy}>
               Simpan
             </Button>
           </>
@@ -1069,6 +1079,14 @@ function openUndo(house: Row) {
       >
         {occupancyModal && (
           <div className="grid gap-4">
+            <div className="flex flex-col gap-1">
+              <p className="text-sm font-semibold text-[var(--ink)]">
+                {occupancyModal.house.code} · {occupancyModal.house.owner}
+              </p>
+              <p className="text-xs text-[var(--muted)]">
+                Tandai hunian untuk bulan tertentu.
+              </p>
+            </div>
             <div className="field-group">
               <label className="field-label" htmlFor="occupancy-period">
                 Periode
@@ -1087,24 +1105,35 @@ function openUndo(house: Row) {
               />
             </div>
             <div className="field-group">
-              <label className="field-label" htmlFor="occupancy-status">
-                Status
-              </label>
-              <select
-                id="occupancy-status"
-                className="select focus-ring"
-                value={occupancyModal.status}
-                onChange={(event) =>
-                  setOccupancyModal((prev) =>
-                    prev
-                      ? { ...prev, status: event.target.value as "vacant" | "occupied" }
-                      : prev,
-                  )
-                }
-              >
-                <option value="vacant">Kosong</option>
-                <option value="occupied">Terisi</option>
-              </select>
+              <span className="field-label">Status</span>
+              <div className="flex gap-3">
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="occupancy-status"
+                    checked={occupancyModal.status === "kosong"}
+                    onChange={() =>
+                      setOccupancyModal((prev) =>
+                        prev ? { ...prev, status: "kosong" } : prev,
+                      )
+                    }
+                  />
+                  Kosong
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="occupancy-status"
+                    checked={occupancyModal.status === "terisi"}
+                    onChange={() =>
+                      setOccupancyModal((prev) =>
+                        prev ? { ...prev, status: "terisi" } : prev,
+                      )
+                    }
+                  />
+                  Terisi
+                </label>
+              </div>
             </div>
             <div className="field-group">
               <label className="field-label" htmlFor="occupancy-note">
@@ -1118,7 +1147,7 @@ function openUndo(house: Row) {
                     prev ? { ...prev, note: event.target.value } : prev,
                   )
                 }
-                placeholder="Mis. renovasi"
+                placeholder="Mis. kosong sejak pindahan"
               />
             </div>
           </div>
@@ -1132,6 +1161,7 @@ type RowActionHandlers = {
   onAction: (type: ActionType, row: Row) => void;
   onUndo: (row: Row) => void;
   onDetail: (row: Row) => void;
+  onOccupancy: (row: Row) => void;
 };
 
 type DashboardRowTableProps = RowActionHandlers & {
@@ -1251,12 +1281,12 @@ const MobileRowCard = React.memo(function MobileRowCard({
             />
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {showRent && (
-            <Button
-              size="sm"
-              variant="primary"
-              onClick={() => onAction("rent-full", row)}
+    <div className="flex flex-wrap gap-2">
+      {showRent && (
+        <Button
+          size="sm"
+          variant="primary"
+          onClick={() => onAction("rent-full", row)}
             >
               Sewa Lunas
             </Button>
@@ -1366,12 +1396,7 @@ function RowActions({
   onUndo,
   onDetail,
   onOccupancy,
-}: {
-  row: Row;
-  showRent: boolean;
-  showWater: boolean;
-  onOccupancy: (row: Row) => void;
-} & RowActionHandlers) {
+}: RowActionHandlers & { row: Row; showRent: boolean; showWater: boolean; }) {
   return (
     <div className="flex items-center justify-end gap-2">
       {showRent && (
@@ -1398,7 +1423,12 @@ function RowActions({
         showWater={showWater}
         onAction={onAction}
       />
-      <RowMenu row={row} onUndo={onUndo} onDetail={onDetail} onOccupancy={onOccupancy} />
+      <RowMenu
+        row={row}
+        onUndo={onUndo}
+        onDetail={onDetail}
+        onOccupancy={onOccupancy}
+      />
     </div>
   );
 }
@@ -1536,6 +1566,16 @@ function RowMenu({
             }}
           >
             Detail
+          </button>
+          <button
+            type="button"
+            className="w-full rounded-[var(--radius)] px-3 py-2 text-left text-sm hover:bg-[#eef2ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
+            onClick={() => {
+              onOccupancy(row);
+              setOpen(false);
+            }}
+          >
+            Status Hunian…
           </button>
         </div>
       )}
