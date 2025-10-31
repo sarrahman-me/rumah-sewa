@@ -3,6 +3,7 @@
 import * as React from "react";
 import { AuthGate } from "@/components/AuthGate";
 import { supabase } from "@/lib/supabase";
+import { writeAudit } from "@/lib/audit";
 import { currentPeriodISO, isoToMonth, monthToISOFirst } from "@/lib/period";
 import { idr } from "@/lib/format";
 import { Button } from "@/components/ui/Button";
@@ -439,6 +440,18 @@ function DashboardInner() {
       return;
     }
 
+    const occupancyAction =
+      occupancyModal.status === "kosong"
+        ? "occupancy_set"
+        : ("occupancy_clear" as const);
+    await writeAudit({
+      action: occupancyAction,
+      house_id: occupancyModal.house.house_id,
+      house_code: occupancyModal.house.code,
+      period: periodISO,
+      note: occupancyModal.note || undefined,
+    });
+
     setFeedback("Status hunian disimpan.");
     setOccupancyModal(null);
     startTransition(() => {
@@ -584,6 +597,24 @@ function openUndo(house: Row) {
       return;
     }
 
+    const auditAction =
+      actionModal.type === "rent-full"
+        ? "rent_full"
+        : actionModal.type === "water-full"
+          ? "water_full"
+          : actionModal.type === "rent-partial"
+            ? "rent_partial"
+            : ("water_partial" as const);
+    await writeAudit({
+      action: auditAction,
+      house_id: actionModal.house.house_id,
+      house_code: actionModal.house.code,
+      period: periodISO,
+      kind,
+      amount: amountValue,
+      note: actionModal.note || undefined,
+    });
+
     setActionSubmitting(false);
     setFeedback("Pembayaran berhasil disimpan.");
     setActionModal(null);
@@ -613,6 +644,15 @@ function openUndo(house: Row) {
       setFeedback("Tidak ada pembayaran untuk dibatalkan.");
       return;
     }
+
+    await writeAudit({
+      action: "undo",
+      house_id: undoModal.house.house_id,
+      house_code: undoModal.house.code,
+      period: periodISO,
+      kind,
+    });
+
     setUndoSubmitting(false);
     setFeedback("Pembayaran terakhir dibatalkan.");
     setUndoModal(null);

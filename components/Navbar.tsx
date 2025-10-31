@@ -35,6 +35,10 @@ export function Navbar() {
 
   const showLogin = session === null;
 
+  const navLinks = session
+    ? [...NAV_LINKS, { href: "/audits", label: "Audit" }]
+    : NAV_LINKS;
+
   return (
     <div className="mx-auto flex w-full max-w-[1100px] flex-wrap items-center justify-between gap-4 px-6 py-5">
       <Link
@@ -45,7 +49,7 @@ export function Navbar() {
         <span>Rumah Sewa</span>
       </Link>
       <nav className="flex flex-wrap items-center gap-2 text-sm text-[var(--muted)]">
-        {NAV_LINKS.map((link) => (
+        {navLinks.map((link) => (
           <Link
             key={link.href}
             href={link.href}

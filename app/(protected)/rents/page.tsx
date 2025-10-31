@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { AuthGate } from "@/components/AuthGate";
 import { supabase } from "@/lib/supabase";
+import { writeAudit } from "@/lib/audit";
 import { currentPeriodISO, isoToMonth, monthToISOFirst } from "@/lib/period";
 import { idr } from "@/lib/format";
 import { Button } from "@/components/ui/Button";
@@ -153,6 +154,16 @@ function RentsPageInner() {
       setSaving(false);
       return;
     }
+
+    await writeAudit({
+      action: "rent_price_change",
+      house_id: editState.house_id,
+      house_code: editState.code,
+      period: startISO,
+      kind: "rent",
+      amount: amountValue,
+      note: "Perubahan harga sewa",
+    });
 
     setMessage(`Harga ${editState.code} diperbarui.`);
     setSaving(false);
