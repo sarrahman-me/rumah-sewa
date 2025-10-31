@@ -4,6 +4,22 @@ import { AuthGate } from "@/components/AuthGate";
 import { supabase } from "@/lib/supabase";
 import { currentPeriodISO, isoToMonth } from "@/lib/period";
 import { idr } from "@/lib/format";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableFooter,
+  TableHead,
+  TableHeaderCell,
+  TableRow,
+} from "@/components/ui/Table";
+import { Input } from "@/components/ui/Input";
+import { DateField } from "@/components/ui/DateField";
+import { Badge } from "@/components/ui/Badge";
+import { cx } from "@/components/ui/utils";
 
 type HouseRow = {
   house_id: string;
@@ -21,6 +37,19 @@ type HouseFormRow = HouseRow & {
   input_date: string;
   warning: string | null;
 };
+
+type FormChangeHandler = (
+  houseId: string,
+  field: "value" | "date",
+  value: string,
+) => void;
+
+const todayISO = new Date().toISOString().slice(0, 10);
+
+const PDAM_ACCOUNT_LABELS = {
+  m1: "Tagihan PDAM 2214825 (H01–H04)",
+  m2: "Tagihan PDAM 2214826 (H05–H08)",
+} as const;
 
 function isoFirstDayFromMonth(value: string): string {
   if (!value) return currentPeriodISO();
@@ -50,19 +79,17 @@ function WaterPageInner() {
   const [billM2, setBillM2] = React.useState<number>(0);
   const [msg, setMsg] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
+  const [savingReadings, setSavingReadings] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [meterBills, setMeterBills] = React.useState<
     { meter: string; total_amount: number }[]
   >([]);
-  const [meterIdByCode, setMeterIdByCode] = React.useState<Record<string, string>>(
-    {},
-  );
+  const [meterIdByCode, setMeterIdByCode] = React.useState<
+    Record<string, string>
+  >({});
   const [readingDate, setReadingDate] = React.useState<string>(() =>
     new Date().toISOString().slice(0, 10),
   );
-  const [showPaste, setShowPaste] = React.useState(false);
-  const [pasteText, setPasteText] = React.useState("");
-  const [pasteSummary, setPasteSummary] = React.useState<string | null>(null);
 
   const periodISO = isoFirstDayFromMonth(month);
   const prevISO = React.useMemo(() => prevMonthIso(periodISO), [periodISO]);
@@ -79,30 +106,25 @@ function WaterPageInner() {
       return;
     }
 
-    const [
-      readingsRes,
-      sharesRes,
-      meterBillsRes,
-      meterMapRes,
-      metersRes,
-    ] = await Promise.all([
-      supabase
-        .from("water_readings")
-        .select("house_id, period, reading_m3")
-        .in("period", [prevISO, periodISO]),
-      supabase
-        .from("water_shares")
-        .select("house_id, share_amount")
-        .eq("period", periodISO),
-      supabase
-        .from("meter_bills")
-        .select("meter_id, total_amount, period, meters(code)")
-        .eq("period", periodISO),
-      supabase
-        .from("meter_house_map")
-        .select("meter_id, house_id, meters(code)"),
-      supabase.from("meters").select("id, code"),
-    ]);
+    const [readingsRes, sharesRes, meterBillsRes, meterMapRes, metersRes] =
+      await Promise.all([
+        supabase
+          .from("water_readings")
+          .select("house_id, period, reading_m3")
+          .in("period", [prevISO, periodISO]),
+        supabase
+          .from("water_shares")
+          .select("house_id, share_amount")
+          .eq("period", periodISO),
+        supabase
+          .from("meter_bills")
+          .select("meter_id, total_amount, period, meters(code)")
+          .eq("period", periodISO),
+        supabase
+          .from("meter_house_map")
+          .select("meter_id, house_id, meters(code)"),
+        supabase.from("meters").select("id, code"),
+      ]);
 
     if (
       readingsRes.error ||
@@ -199,7 +221,7 @@ function WaterPageInner() {
       })),
     );
     setLoading(false);
-  }, [periodISO, prevISO]);
+  }, [periodISO, prevISO, readingDate]);
 
   React.useEffect(() => {
     load();
@@ -220,6 +242,11 @@ function WaterPageInner() {
     }
     return result;
   }, [rows]);
+
+  const hasWarnings = React.useMemo(
+    () => formRows.some((row) => Boolean(row.warning)),
+    [formRows],
+  );
 
   async function handleGenerate() {
     if (!month.trim()) {
@@ -270,52 +297,6 @@ function WaterPageInner() {
     return Number.isFinite(n) ? n : null;
   }
 
-  function applyPaste() {
-    if (!pasteText.trim()) {
-      setPasteSummary("Tidak ada data tempel.");
-      return;
-    }
-    const lines = pasteText.trim().split(/\r?\n/);
-    const map: Record<string, string> = {};
-    let matched = 0;
-    const unmatched: string[] = [];
-    for (const line of lines) {
-      const [houseCodeRaw, valueRaw] = line.split(/\s*[,\t]\s*|\s+/);
-      if (!houseCodeRaw || valueRaw == null) continue;
-      const houseCode = houseCodeRaw.trim().toUpperCase();
-      const row = rows.find((r) => r.code === houseCode);
-      if (!row) {
-        unmatched.push(houseCode);
-        continue;
-      }
-      map[row.house_id] = valueRaw.trim();
-      matched++;
-    }
-    setFormRows((prev) =>
-      prev.map((row) => {
-        if (map[row.house_id]) {
-          const parsed = parseNumberLoose(map[row.house_id]);
-          return {
-            ...row,
-            input_value: map[row.house_id],
-            warning:
-              parsed != null &&
-              row.prev_reading != null &&
-              parsed < row.prev_reading
-                ? "KM turun"
-                : null,
-          };
-        }
-        return row;
-      }),
-    );
-    setPasteSummary(
-      `Baris diterapkan: ${matched}${
-        unmatched.length ? ` · Tidak dikenal: ${unmatched.join(", ")}` : ""
-      }`,
-    );
-  }
-
   function handleFormChange(
     houseId: string,
     field: "value" | "date",
@@ -345,7 +326,24 @@ function WaterPageInner() {
     );
   }
 
+  const stickyCell = React.useCallback(
+    (extra?: string) =>
+      cx(
+        "sticky left-0 z-[2] bg-white shadow-[1px_0_0_0_var(--border)]",
+        extra,
+      ),
+    [],
+  );
+
+  const prevLabel = isoToMonth(prevISO);
+  const currentLabel = isoToMonth(periodISO);
+
   async function handleSaveReadings() {
+    if (hasWarnings) {
+      setMsg("Periksa nilai yang turun sebelum menyimpan.");
+      return;
+    }
+    setSavingReadings(true);
     const pairs = formRows
       .map((row) => {
         const parsed = parseNumberLoose(row.input_value);
@@ -359,6 +357,7 @@ function WaterPageInner() {
       .filter(Boolean);
     if (!pairs.length) {
       alert("Isi minimal satu KM terlebih dahulu.");
+      setSavingReadings(false);
       return;
     }
     const { error } = await supabase.rpc("bulk_upsert_water_readings", {
@@ -368,342 +367,454 @@ function WaterPageInner() {
     });
     if (error) {
       alert(error.message);
+      setSavingReadings(false);
       return;
     }
     setMsg("KM tersimpan.");
     await load();
     await supabase.rpc("generate_water_shares", { p_period: periodISO });
     await load();
+    setSavingReadings(false);
   }
 
   return (
-    <AuthGate>
-      <div className="space-y-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold text-blue-700">
-              Pembacaan & Pembagian Air
-            </h1>
-            <p className="text-sm text-slate-500">
-              Periode {isoToMonth(prevISO)} → {isoToMonth(periodISO)}
-            </p>
-          </div>
-          <label className="flex flex-col gap-1 text-sm text-slate-600 sm:flex-row sm:items-center">
-            <span className="font-medium text-blue-700">Periode</span>
-            <input
-              type="month"
-              value={month}
-              onChange={(e) => setMonth(e.target.value)}
-              className="rounded-lg border border-blue-200 bg-white px-3 py-2"
-            />
-          </label>
-        </div>
+    <div className="page-stack">
+      <div className="flex flex-col gap-2">
+        <h1>Pembacaan &amp; Pembagian Air</h1>
+        <p className="subtle">
+          Periode {prevLabel} → {currentLabel}
+        </p>
+      </div>
 
-        <div className="space-y-4 rounded-xl border border-blue-100 bg-white p-4 shadow-sm sm:p-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <h2 className="text-lg font-semibold text-blue-700">
-                Pencatatan KM Bulan Ini
-              </h2>
-              <p className="text-xs text-slate-500">
-                Periode {isoToMonth(periodISO)} dibanding {isoToMonth(prevISO)}
-              </p>
-            </div>
-            <div className="grid gap-2 text-sm sm:grid-cols-2">
-              <label className="flex flex-col gap-1">
-                <span>Tanggal Pencatatan</span>
-                <input
-                  type="date"
-                  value={readingDate}
-                  onChange={(e) => setReadingDate(e.target.value)}
-                  className="rounded-lg border border-blue-200 bg-white px-3 py-2"
+      <Card>
+        <div className="card-pad space-y-4">
+          <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-start">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="field-group">
+                <label className="field-label" htmlFor="water-period">
+                  Periode (bulan)
+                </label>
+                <Input
+                  id="water-period"
+                  type="month"
+                  value={month}
+                  onChange={(event) => setMonth(event.target.value)}
                 />
-              </label>
-              <div className="flex flex-col gap-2 sm:items-end">
-                <button
-                  type="button"
-                  onClick={handleSaveReadings}
-                  className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
-                >
-                  Simpan KM Bulan Ini
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowPaste((v) => !v)}
-                  className="text-xs text-blue-600 underline"
-                >
-                  {showPaste ? "Tutup tempel CSV/TSV" : "Tempel dari CSV/TSV"}
-                </button>
               </div>
+              <div className="field-group">
+                <label className="field-label" htmlFor="water-date">
+                  Tanggal pencatatan
+                </label>
+                <DateField
+                  id="water-date"
+                  value={readingDate}
+                  max={todayISO}
+                  onChange={(event) => setReadingDate(event.target.value)}
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                variant="primary"
+                onClick={handleSaveReadings}
+                disabled={savingReadings || hasWarnings}
+              >
+                {savingReadings ? "Menyimpan..." : "Simpan KM Bulan Ini"}
+              </Button>
             </div>
           </div>
-          {showPaste && (
-            <div className="space-y-2 rounded-lg border border-blue-100 bg-blue-50/40 p-3 text-sm">
-              <textarea
-                className="w-full rounded-lg border border-blue-200 bg-white px-3 py-2"
-                rows={4}
-                placeholder={"H01\t1750\nH02\t1898"}
-                value={pasteText}
-                onChange={(e) => setPasteText(e.target.value)}
-              />
-              <div className="flex items-center justify-between text-xs">
-                <button
-                  type="button"
-                  onClick={applyPaste}
-                  className="rounded-lg border border-blue-200 px-3 py-1 text-blue-600 transition hover:bg-blue-100"
-                >
-                  Terapkan ke tabel
-                </button>
-                {pasteSummary && <span className="text-blue-500">{pasteSummary}</span>}
-              </div>
-            </div>
+          {hasWarnings && (
+            <p className="text-sm text-[#dc2626]">
+              Periksa nilai yang turun sebelum menyimpan.
+            </p>
           )}
-          <div className="overflow-x-auto rounded-xl border border-blue-100">
-            <table className="min-w-full text-sm sm:text-base">
-              <thead className="bg-blue-50/60 text-blue-600">
-                <tr>
-                  <th className="px-3 py-2 text-left">Rumah</th>
-                  <th className="px-3 py-2 text-left">Pemilik</th>
-                  <th className="px-3 py-2 text-left">KM {isoToMonth(prevISO)}</th>
-                  <th className="px-3 py-2 text-left">KM {isoToMonth(periodISO)}</th>
-                  <th className="px-3 py-2 text-left">Tanggal</th>
-                  <th className="px-3 py-2 text-left">Meter</th>
-                  <th className="px-3 py-2 text-left"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {formRows.map((row) => (
-                  <tr key={row.house_id} className="border-t border-blue-100 text-slate-700">
-                    <td className="px-3 py-2 font-semibold text-slate-800">{row.code}</td>
-                    <td className="px-3 py-2">{row.owner}</td>
-                    <td className="px-3 py-2">{row.prev_reading ?? "-"}</td>
-                    <td className="px-3 py-2">
-                      <input
-                        type="number"
-                        min="0"
-                        className="w-32 rounded-lg border border-blue-200 px-2 py-1"
-                        value={row.input_value}
-                        onChange={(e) =>
-                          handleFormChange(row.house_id, "value", e.target.value)
-                        }
-                      />
-                    </td>
-                    <td className="px-3 py-2">
-                      <input
-                        type="date"
-                        className="rounded-lg border border-blue-200 px-2 py-1 text-sm"
-                        value={row.input_date}
-                        onChange={(e) =>
-                          handleFormChange(row.house_id, "date", e.target.value)
-                        }
-                      />
-                    </td>
-                    <td className="px-3 py-2 text-slate-600">{row.meter}</td>
-                    <td className="px-3 py-2 text-xs text-red-600">
-                      {row.warning ? `⚠︎ ${row.warning}` : ""}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
         </div>
+      </Card>
 
-        <div className="grid gap-4 lg:grid-cols-[2fr,1fr]">
-          <div className="rounded-xl border border-blue-100 bg-blue-50/40 p-4 sm:p-6">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <label className="flex flex-col gap-1 text-sm text-slate-600">
-                <span>Tagihan PDAM M1 (H01–H04)</span>
-                <input
+      {msg && (
+        <Card>
+          <div className="card-pad text-sm text-[var(--primary)]">{msg}</div>
+        </Card>
+      )}
+
+      <Card padded={false}>
+        <div className="card-pad hidden sm:block">
+          <TableContainer>
+            <Table className="text-sm">
+              <caption className="sr-only">
+                Formulir pencatatan KM air per rumah
+              </caption>
+              <TableHead>
+                <TableRow>
+                  <TableHeaderCell className={stickyCell("px-4 py-3")}>
+                    Rumah
+                  </TableHeaderCell>
+                  <TableHeaderCell className="px-4 py-3">
+                    Pemilik
+                  </TableHeaderCell>
+                  <TableHeaderCell className="px-4 py-3">
+                    KM {prevLabel}
+                  </TableHeaderCell>
+                  <TableHeaderCell className="px-4 py-3">
+                    KM {currentLabel}
+                  </TableHeaderCell>
+                  <TableHeaderCell className="px-4 py-3">
+                    Tanggal
+                  </TableHeaderCell>
+                  <TableHeaderCell className="px-4 py-3">Meter</TableHeaderCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {formRows.map((row) => (
+                  <WaterTableRow
+                    key={row.house_id}
+                    row={row}
+                    stickyCell={stickyCell}
+                    onChange={handleFormChange}
+                  />
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </div>
+        <div className="card-pad space-y-3 sm:hidden">
+          {formRows.map((row) => (
+            <WaterMobileCard
+              key={row.house_id}
+              row={row}
+              onChange={handleFormChange}
+            />
+          ))}
+        </div>
+      </Card>
+
+      <div className="grid gap-4 lg:grid-cols-[2fr,1fr]">
+        <Card>
+          <div className="card-pad space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="field-group">
+                <label className="field-label" htmlFor="bill-m1">
+                  {PDAM_ACCOUNT_LABELS.m1}
+                </label>
+                <Input
+                  id="bill-m1"
                   type="number"
+                  inputMode="decimal"
                   min="0"
-                  className="rounded-lg border border-blue-200 bg-white px-3 py-2"
                   value={billM1 || ""}
-                  onChange={(e) => setBillM1(Number(e.target.value || 0))}
+                  onChange={(event) =>
+                    setBillM1(Number(event.target.value || 0))
+                  }
                   placeholder="400000"
                 />
-              </label>
-              <label className="flex flex-col gap-1 text-sm text-slate-600">
-                <span>Tagihan PDAM M2 (H05–H08)</span>
-                <input
+              </div>
+              <div className="field-group">
+                <label className="field-label" htmlFor="bill-m2">
+                  {PDAM_ACCOUNT_LABELS.m2}
+                </label>
+                <Input
+                  id="bill-m2"
                   type="number"
+                  inputMode="decimal"
                   min="0"
-                  className="rounded-lg border border-blue-200 bg-white px-3 py-2"
                   value={billM2 || ""}
-                  onChange={(e) => setBillM2(Number(e.target.value || 0))}
+                  onChange={(event) =>
+                    setBillM2(Number(event.target.value || 0))
+                  }
                   placeholder="450000"
                 />
-              </label>
+              </div>
             </div>
-            <div className="mt-4 flex flex-col items-stretch gap-2 sm:flex-row sm:justify-between sm:gap-3">
-              <div className="text-xs text-blue-500 sm:text-sm">
-                <p>
-                  Pengukuran: {isoToMonth(prevISO)} → {isoToMonth(periodISO)}
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-sm text-[var(--muted)]">
+                <p className="tabular-nums">
+                  Usage 2214825 (M1): {(usageByMeter["M1"] ?? 0).toFixed(2)} m³
+                  · Share {idr(shareByMeter["M1"] ?? 0)}
                 </p>
-                <p>
-                  Usage M1: {(usageByMeter["M1"] ?? 0).toFixed(2)} m³ · Share:{" "}
-                  {idr(shareByMeter["M1"] ?? 0)}
-                </p>
-                <p>
-                  Usage M2: {(usageByMeter["M2"] ?? 0).toFixed(2)} m³ · Share:{" "}
-                  {idr(shareByMeter["M2"] ?? 0)}
+                <p className="tabular-nums">
+                  Usage 2214826 (M2): {(usageByMeter["M2"] ?? 0).toFixed(2)} m³
+                  · Share {idr(shareByMeter["M2"] ?? 0)}
                 </p>
               </div>
-              <button
-                type="button"
+              <Button
+                variant="primary"
                 onClick={handleGenerate}
                 disabled={saving}
-                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {saving ? "Memproses…" : "Simpan Tagihan & Hitung"}
-              </button>
+                {saving ? "Memproses..." : "Simpan Tagihan & Hitung"}
+              </Button>
             </div>
           </div>
-          <div className="rounded-xl border border-blue-100 bg-white p-4 shadow-sm sm:p-5">
-            <h2 className="text-sm font-semibold text-blue-700">
-              Riwayat Tagihan
+        </Card>
+        <Card>
+          <div className="card-pad space-y-2">
+            <h2 className="text-sm font-semibold text-[var(--ink)]">
+              Riwayat Tagihan ({currentLabel})
             </h2>
-            <p className="text-xs text-slate-500">
-              Periode {isoToMonth(periodISO)}
-            </p>
-            <ul className="mt-3 space-y-2 text-sm text-slate-600">
-              {meterBills.length === 0 && (
-                <li className="text-slate-400">Belum ada tagihan tersimpan.</li>
-              )}
-              {meterBills.map((bill) => (
-                <li
-                  key={bill.meter}
-                  className="flex items-center justify-between rounded-lg border border-blue-100 bg-blue-50 px-3 py-2"
-                >
-                  <span className="font-semibold text-blue-700">
-                    {bill.meter}
-                  </span>
-                  <span>{idr(bill.total_amount)}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-
-        {msg && (
-          <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
-            {msg}
-          </div>
-        )}
-
-        <div className="overflow-x-auto rounded-2xl border border-blue-100 bg-white shadow-sm">
-          <table className="min-w-full text-sm sm:text-base">
-            <thead className="bg-blue-50/70 text-blue-600">
-              <tr>
-                <th className="px-3 py-3 text-left">Rumah</th>
-                <th className="px-3 py-3 text-left">Pemilik</th>
-                <th className="px-3 py-3 text-left">
-                  KM {isoToMonth(prevISO)}
-                </th>
-                <th className="px-3 py-3 text-left">
-                  KM {isoToMonth(periodISO)}
-                </th>
-                <th className="px-3 py-3 text-left">Pemakaian (m³)</th>
-                <th className="px-3 py-3 text-left">Meter</th>
-                <th className="px-3 py-3 text-left">Tagihan (Rp)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && (
-                <tr>
-                  <td
-                    colSpan={6}
-                    className="px-4 py-6 text-center text-sm text-slate-400"
+            {meterBills.length === 0 ? (
+              <p className="text-sm text-[var(--muted)]">
+                Belum ada tagihan tersimpan.
+              </p>
+            ) : (
+              <ul className="space-y-2 text-sm">
+                {meterBills.map((bill) => (
+                  <li
+                    key={bill.meter}
+                    className="flex items-center justify-between rounded-[var(--radius)] border border-[var(--border)] bg-[#f8fafc] px-3 py-2"
                   >
-                    Memuat…
-                  </td>
-                </tr>
-              )}
-              {!loading &&
-                rows.map((row) => (
-                  <tr
-                    key={row.house_id}
-                    className="border-t border-blue-100 text-slate-700"
-                  >
-                    <td className="px-3 py-3 font-semibold text-slate-800">
-                      {row.code}
-                    </td>
-                    <td className="px-3 py-3">{row.owner}</td>
-                    <td className="px-3 py-3">
-                      {row.prev_reading !== null ? row.prev_reading : "-"}
-                    </td>
-                    <td className="px-3 py-3">
-                      {row.curr_reading !== null ? row.curr_reading : "-"}
-                    </td>
-                    <td className="px-3 py-3">{row.usage.toFixed(2)}</td>
-                    <td className="px-3 py-3 text-slate-600">{row.meter}</td>
-                    <td className="px-3 py-3 font-semibold text-blue-700">
-                      {idr(row.share)}
-                    </td>
-                  </tr>
+                    <span className="font-semibold text-[var(--primary)]">
+                      {bill.meter}
+                    </span>
+                    <span className="tabular-nums">
+                      {idr(bill.total_amount)}
+                    </span>
+                  </li>
                 ))}
-              {!loading && rows.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={6}
-                    className="px-4 py-6 text-center text-sm text-slate-400"
-                  >
-                    Tidak ada data.
-                  </td>
-                </tr>
-              )}
-              {!loading && rows.length > 0 && (
-                <>
-                  <tr className="border-t border-blue-100 bg-blue-50/40 font-semibold text-blue-700">
-                    <td className="px-3 py-3" colSpan={4}>
-                      Total M1
-                    </td>
-                    <td className="px-3 py-3">
-                      {(usageByMeter["M1"] ?? 0).toFixed(2)} m³
-                    </td>
-                    <td className="px-3 py-3">M1</td>
-                    <td className="px-3 py-3">
-                      {idr(shareByMeter["M1"] ?? 0)}
-                    </td>
-                  </tr>
-                  <tr className="border-t border-blue-100 bg-blue-50/40 font-semibold text-blue-700">
-                    <td className="px-3 py-3" colSpan={4}>
-                      Total M2
-                    </td>
-                    <td className="px-3 py-3">
-                      {(usageByMeter["M2"] ?? 0).toFixed(2)} m³
-                    </td>
-                    <td className="px-3 py-3">M2</td>
-                    <td className="px-3 py-3">
-                      {idr(shareByMeter["M2"] ?? 0)}
-                    </td>
-                  </tr>
-                  <tr className="border-t border-blue-100 bg-blue-100/50 font-semibold text-blue-800">
-                    <td className="px-3 py-3" colSpan={4}>
-                      Grand Total
-                    </td>
-                    <td className="px-3 py-3">
-                      {(
-                        (usageByMeter["M1"] ?? 0) + (usageByMeter["M2"] ?? 0)
-                      ).toFixed(2)}{" "}
-                      m³
-                    </td>
-                    <td className="px-3 py-3">-</td>
-                    <td className="px-3 py-3">
-                      {idr(
-                        (shareByMeter["M1"] ?? 0) + (shareByMeter["M2"] ?? 0),
-                      )}
-                    </td>
-                  </tr>
-                </>
-              )}
-            </tbody>
-          </table>
-        </div>
+              </ul>
+            )}
+          </div>
+        </Card>
       </div>
-    </AuthGate>
+
+      <Card>
+        <div className="card-pad">
+          <TableContainer>
+            <Table className="text-sm">
+              <caption className="sr-only">
+                Ringkasan pembagian air per rumah
+              </caption>
+              <TableHead>
+                <TableRow>
+                  <TableHeaderCell>Rumah</TableHeaderCell>
+                  <TableHeaderCell>Pemilik</TableHeaderCell>
+                  <TableHeaderCell>KM {prevLabel}</TableHeaderCell>
+                  <TableHeaderCell>KM {currentLabel}</TableHeaderCell>
+                  <TableHeaderCell>Pemakaian (m³)</TableHeaderCell>
+                  <TableHeaderCell>Meter</TableHeaderCell>
+                  <TableHeaderCell>Tagihan (Rp)</TableHeaderCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {loading && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={7}
+                      className="py-6 text-center text-[var(--muted)]"
+                    >
+                      Memuat...
+                    </TableCell>
+                  </TableRow>
+                )}
+                {!loading &&
+                  rows.map((row) => (
+                    <TableRow key={row.house_id}>
+                      <TableCell className="font-semibold text-[var(--ink)]">
+                        {row.code}
+                      </TableCell>
+                      <TableCell>{row.owner}</TableCell>
+                      <TableCell className="tabular-nums">
+                        {row.prev_reading !== null ? row.prev_reading : "-"}
+                      </TableCell>
+                      <TableCell className="tabular-nums">
+                        {row.curr_reading !== null ? row.curr_reading : "-"}
+                      </TableCell>
+                      <TableCell className="tabular-nums">
+                        {row.usage.toFixed(2)}
+                      </TableCell>
+                      <TableCell>{row.meter}</TableCell>
+                      <TableCell className="tabular-nums font-semibold text-[var(--primary)]">
+                        {idr(row.share)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                {!loading && rows.length === 0 && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={7}
+                      className="py-6 text-center text-[var(--muted)]"
+                    >
+                      Tidak ada data.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+              <TableFooter>
+                <TableRow className="bg-[#eef2ff] font-medium text-[var(--primary)]">
+                  <TableCell colSpan={4}>Total M1</TableCell>
+                  <TableCell className="tabular-nums">
+                    {(usageByMeter["M1"] ?? 0).toFixed(2)} m³
+                  </TableCell>
+                  <TableCell>M1</TableCell>
+                  <TableCell className="tabular-nums">
+                    {idr(shareByMeter["M1"] ?? 0)}
+                  </TableCell>
+                </TableRow>
+                <TableRow className="bg-[#eef2ff] font-medium text-[var(--primary)]">
+                  <TableCell colSpan={4}>Total M2</TableCell>
+                  <TableCell className="tabular-nums">
+                    {(usageByMeter["M2"] ?? 0).toFixed(2)} m³
+                  </TableCell>
+                  <TableCell>M2</TableCell>
+                  <TableCell className="tabular-nums">
+                    {idr(shareByMeter["M2"] ?? 0)}
+                  </TableCell>
+                </TableRow>
+                <TableRow className="bg-[#dbeafe] font-semibold text-[var(--primary)]">
+                  <TableCell colSpan={4}>Grand Total</TableCell>
+                  <TableCell className="tabular-nums">
+                    {(
+                      (usageByMeter["M1"] ?? 0) + (usageByMeter["M2"] ?? 0)
+                    ).toFixed(2)}{" "}
+                    m³
+                  </TableCell>
+                  <TableCell>-</TableCell>
+                  <TableCell className="tabular-nums">
+                    {idr((shareByMeter["M1"] ?? 0) + (shareByMeter["M2"] ?? 0))}
+                  </TableCell>
+                </TableRow>
+              </TableFooter>
+            </Table>
+          </TableContainer>
+        </div>
+      </Card>
+    </div>
   );
 }
+
+type WaterRowProps = {
+  row: HouseFormRow;
+  onChange: FormChangeHandler;
+  stickyCell: (extra?: string) => string;
+};
+
+const WaterTableRow = React.memo(function WaterTableRow({
+  row,
+  onChange,
+  stickyCell,
+}: WaterRowProps) {
+  return (
+    <TableRow className="align-top">
+      <TableCell
+        className={stickyCell("px-4 py-3 font-semibold text-[var(--ink)]")}
+      >
+        {row.code}
+      </TableCell>
+      <TableCell className="px-4 py-3 text-sm text-[var(--muted)]">
+        {row.owner}
+      </TableCell>
+      <TableCell className="px-4 py-3 tabular-nums">
+        {row.prev_reading !== null ? row.prev_reading : "-"}
+      </TableCell>
+      <TableCell className="px-4 py-3">
+        <div className="flex flex-col gap-2">
+          <Input
+            type="number"
+            inputMode="decimal"
+            min="0"
+            className="tabular-nums w-full max-w-[140px]"
+            value={row.input_value}
+            onChange={(event) =>
+              onChange(row.house_id, "value", event.target.value)
+            }
+            aria-label={`KM ${row.code} bulan ini`}
+          />
+          {row.warning && (
+            <Badge
+              variant="danger"
+              className="w-fit text-[11px] uppercase tracking-wide"
+            >
+              Turun
+            </Badge>
+          )}
+        </div>
+      </TableCell>
+      <TableCell className="px-4 py-3">
+        <DateField
+          value={row.input_date}
+          max={todayISO}
+          onChange={(event) =>
+            onChange(row.house_id, "date", event.target.value)
+          }
+          aria-label={`Tanggal pencatatan ${row.code}`}
+        />
+      </TableCell>
+      <TableCell className="px-4 py-3 text-[var(--muted)]">
+        {row.meter}
+      </TableCell>
+    </TableRow>
+  );
+});
+
+const WaterMobileCard = React.memo(function WaterMobileCard({
+  row,
+  onChange,
+}: {
+  row: HouseFormRow;
+  onChange: FormChangeHandler;
+}) {
+  return (
+    <div className="rounded-[var(--radius)] border border-[var(--border)] bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-[var(--ink)]">{row.code}</p>
+          <p className="text-sm text-[var(--muted)]">{row.owner}</p>
+          <p className="mt-1 text-xs text-[var(--muted)]">
+            KM sebelumnya:{" "}
+            <span className="tabular-nums">
+              {row.prev_reading !== null ? row.prev_reading : "-"}
+            </span>
+          </p>
+        </div>
+        {row.warning && (
+          <Badge
+            variant="danger"
+            className="text-[11px] uppercase tracking-wide"
+          >
+            Turun
+          </Badge>
+        )}
+      </div>
+      <div className="mt-3 grid gap-3">
+        <div className="field-group">
+          <label
+            className="field-label"
+            htmlFor={`mobile-value-${row.house_id}`}
+          >
+            KM {row.code}
+          </label>
+          <Input
+            id={`mobile-value-${row.house_id}`}
+            type="number"
+            inputMode="decimal"
+            min="0"
+            className="tabular-nums"
+            value={row.input_value}
+            onChange={(event) =>
+              onChange(row.house_id, "value", event.target.value)
+            }
+          />
+        </div>
+        <div className="field-group">
+          <label
+            className="field-label"
+            htmlFor={`mobile-date-${row.house_id}`}
+          >
+            Tanggal pencatatan
+          </label>
+          <DateField
+            id={`mobile-date-${row.house_id}`}
+            value={row.input_date}
+            max={todayISO}
+            onChange={(event) =>
+              onChange(row.house_id, "date", event.target.value)
+            }
+          />
+        </div>
+        <p className="text-xs text-[var(--muted)]">Meter: {row.meter}</p>
+      </div>
+    </div>
+  );
+});
 
 export default function WaterPage() {
   return (

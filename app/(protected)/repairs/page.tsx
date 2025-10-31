@@ -498,7 +498,7 @@ function RepairsView() {
                                 onClick={() => startEdit(row)}
                                 className="rounded-lg border border-blue-200 px-3 py-1 text-xs font-semibold text-blue-600 transition hover:bg-blue-50"
                               >
-                                Edit
+                                Ubah
                               </button>
                               <button
                                 onClick={() => softDelete(row.id)}

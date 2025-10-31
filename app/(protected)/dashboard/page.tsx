@@ -1008,20 +1008,24 @@ const MobileRowCard = React.memo(function MobileRowCard({
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            variant="primary"
-            onClick={() => onAction("rent-full", row)}
-          >
-            Sewa Lunas
-          </Button>
-          <Button
-            size="sm"
-            variant="primaryOutline"
-            onClick={() => onAction("water-full", row)}
-          >
-            Air Lunas
-          </Button>
+          {row.rent_due > 0 && (
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => onAction("rent-full", row)}
+            >
+              Sewa Lunas
+            </Button>
+          )}
+          {row.water_due > 0 && (
+            <Button
+              size="sm"
+              variant="primaryOutline"
+              onClick={() => onAction("water-full", row)}
+            >
+              Air Lunas
+            </Button>
+          )}
           <PartialMenu row={row} onAction={onAction} />
         </div>
       </div>
@@ -1104,18 +1108,24 @@ function TotalsCell({
 }
 
 function RowActions({ row, onAction, onUndo, onDetail }: { row: Row } & RowActionHandlers) {
+  const hasRentDue = row.rent_due > 0;
+  const hasWaterDue = row.water_due > 0;
   return (
     <div className="flex items-center justify-end gap-2">
-      <Button size="sm" variant="primary" onClick={() => onAction("rent-full", row)}>
-        Sewa Lunas
-      </Button>
-      <Button
-        size="sm"
-        variant="primaryOutline"
-        onClick={() => onAction("water-full", row)}
-      >
-        Air Lunas
-      </Button>
+      {hasRentDue && (
+        <Button size="sm" variant="primary" onClick={() => onAction("rent-full", row)}>
+          Sewa Lunas
+        </Button>
+      )}
+      {hasWaterDue && (
+        <Button
+          size="sm"
+          variant="primaryOutline"
+          onClick={() => onAction("water-full", row)}
+        >
+          Air Lunas
+        </Button>
+      )}
       <PartialMenu row={row} onAction={onAction} />
       <RowMenu row={row} onUndo={onUndo} onDetail={onDetail} />
     </div>

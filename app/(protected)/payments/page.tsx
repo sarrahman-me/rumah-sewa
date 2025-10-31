@@ -585,7 +585,7 @@ function PaymentsPageInner() {
                     <td className="px-3 py-2">
                       {isVoided ? (
                         <span className="rounded-full bg-red-100 px-2 py-1 text-xs font-medium text-red-600">
-                          void
+                          hapus
                         </span>
                       ) : (
                         <span className="rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-600">
@@ -617,14 +617,14 @@ function PaymentsPageInner() {
                                 onClick={() => startEdit(row)}
                                 className="rounded-lg border border-blue-200 px-3 py-1 text-xs font-semibold text-blue-600 transition hover:bg-blue-50"
                               >
-                                Edit
+                                Ubah
                               </button>
                             )}
                             <button
                               onClick={() => voidPayment(row.id)}
                               className="rounded-lg border border-red-200 px-3 py-1 text-xs font-semibold text-red-600 transition hover:bg-red-50"
                             >
-                              Void
+                              Hapus
                             </button>
                           </>
                         )}
