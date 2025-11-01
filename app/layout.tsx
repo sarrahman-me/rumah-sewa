@@ -1,10 +1,11 @@
-import type { Metadata } from "next";
-import "./globals.css";
-import { Navbar } from "@/components/Navbar";
+// Root layout wraps application shell; formatting only, no behavior changes.
+import type { Metadata } from 'next';
+import './globals.css';
+import { Navbar } from '@/components/Navbar';
 
 export const metadata: Metadata = {
-  title: "Rumah Sewa",
-  description: "Manajemen sewa & air keluarga",
+  title: 'Rumah Sewa',
+  description: 'Manajemen sewa & air keluarga',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

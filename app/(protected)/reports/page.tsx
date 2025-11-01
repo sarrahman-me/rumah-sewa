@@ -1,13 +1,17 @@
-"use client";
+'use client';
 
-import * as React from "react";
-import { AuthGate } from "@/components/AuthGate";
-import { supabase } from "@/lib/supabase";
-import { currentPeriodISO } from "@/lib/period";
-import { idr } from "@/lib/format";
+// Reports page compiles monthly summaries; presentation-only adjustments, no behavior changes.
 
-const OWNER_LIST = ["Rahman", "Dival", "Fadel"] as const;
-const OWNER_FILTER_OPTIONS = ["Semua", ...OWNER_LIST] as const;
+import * as React from 'react';
+
+import { AuthGate } from '@/components/AuthGate';
+
+import { idr } from '@/lib/format';
+import { currentPeriodISO } from '@/lib/period';
+import { supabase } from '@/lib/supabase';
+
+const OWNER_LIST = ['Rahman', 'Dival', 'Fadel'] as const;
+const OWNER_FILTER_OPTIONS = ['Semua', ...OWNER_LIST] as const;
 
 type OwnerSummaryRow = {
   owner: string;
@@ -40,13 +44,13 @@ type HouseDetail = {
 
 function isoFirstDayFromMonth(value: string): string {
   if (!value) return currentPeriodISO();
-  const [year, month] = value.split("-");
+  const [year, month] = value.split('-');
   if (!year || !month) return currentPeriodISO();
-  return `${year}-${month.padStart(2, "0")}-01`;
+  return `${year}-${month.padStart(2, '0')}-01`;
 }
 
 function formatDueAccent(value: number): string {
-  return value > 0 ? `text-red-600 font-semibold` : "text-blue-600";
+  return value > 0 ? `text-red-600 font-semibold` : 'text-blue-600';
 }
 
 export default function ReportsPage() {
@@ -58,14 +62,10 @@ export default function ReportsPage() {
 }
 
 function ReportsView() {
-  const [fromMonth, setFromMonth] = React.useState(() =>
-    currentPeriodISO().slice(0, 7),
-  );
-  const [toMonth, setToMonth] = React.useState(() =>
-    currentPeriodISO().slice(0, 7),
-  );
+  const [fromMonth, setFromMonth] = React.useState(() => currentPeriodISO().slice(0, 7));
+  const [toMonth, setToMonth] = React.useState(() => currentPeriodISO().slice(0, 7));
   const [ownerFilter, setOwnerFilter] =
-    React.useState<(typeof OWNER_FILTER_OPTIONS)[number]>("Semua");
+    React.useState<(typeof OWNER_FILTER_OPTIONS)[number]>('Semua');
   const [loading, setLoading] = React.useState(false);
   const [message, setMessage] = React.useState<string | null>(null);
   const [ownerRows, setOwnerRows] = React.useState<OwnerSummaryRow[]>([]);
@@ -102,42 +102,36 @@ function ReportsView() {
         rentStatusRes,
         waterStatusRes,
       ] = await Promise.all([
-        supabase
-          .from("houses")
-          .select("id,code,owner,is_repair_fund")
-          .order("code"),
-        supabase.rpc("v_owner_rent_summary", {
+        supabase.from('houses').select('id,code,owner,is_repair_fund').order('code'),
+        supabase.rpc('v_owner_rent_summary', {
           range_from: fromISO,
           range_to: toISO,
         }),
-        supabase.rpc("v_owner_water_summary", {
+        supabase.rpc('v_owner_water_summary', {
           range_from: fromISO,
           range_to: toISO,
         }),
-        supabase.rpc("v_repair_fund_contrib", {
+        supabase.rpc('v_repair_fund_contrib', {
           range_from: fromISO,
           range_to: toISO,
         }),
-        supabase.rpc("v_repair_fund_spent", {
+        supabase.rpc('v_repair_fund_spent', {
           range_from: fromISO,
           range_to: toISO,
         }),
         supabase
-          .from("v_rent_status")
-          .select("house_id,period,rent_bill,rent_paid,rent_due")
-          .gte("period", fromISO)
-          .lte("period", toISO),
+          .from('v_rent_status')
+          .select('house_id,period,rent_bill,rent_paid,rent_due')
+          .gte('period', fromISO)
+          .lte('period', toISO),
         supabase
-          .from("v_water_status")
-          .select("house_id,period,water_bill,water_paid,water_due")
-          .gte("period", fromISO)
-          .lte("period", toISO),
+          .from('v_water_status')
+          .select('house_id,period,water_bill,water_paid,water_due')
+          .gte('period', fromISO)
+          .lte('period', toISO),
       ]);
 
-      const rentMap = new Map<
-        string,
-        { rent_bill: number; rent_paid: number; rent_due: number }
-      >();
+      const rentMap = new Map<string, { rent_bill: number; rent_paid: number; rent_due: number }>();
       (rentSummaryRes.data as any[] | null)?.forEach((row) => {
         rentMap.set(row.owner, {
           rent_bill: Number(row.rent_bill ?? 0),
@@ -171,18 +165,16 @@ function ReportsView() {
 
       const pickNumber = (input: any, key?: string): number => {
         if (input == null) return 0;
-        if (typeof input === "number")
-          return Number.isFinite(input) ? input : 0;
-        if (!Array.isArray(input) && key && typeof input === "object") {
+        if (typeof input === 'number') return Number.isFinite(input) ? input : 0;
+        if (!Array.isArray(input) && key && typeof input === 'object') {
           const value = (input as any)[key];
-          const num = typeof value === "number" ? value : Number(value ?? 0);
+          const num = typeof value === 'number' ? value : Number(value ?? 0);
           return Number.isFinite(num) ? num : 0;
         }
         if (Array.isArray(input)) {
           return input.reduce((sum, row) => {
             const value = key ? (row?.[key] as any) : row;
-            const num =
-              typeof value === "number" ? value : Number(value ?? 0);
+            const num = typeof value === 'number' ? value : Number(value ?? 0);
             return sum + (Number.isFinite(num) ? num : 0);
           }, 0);
         }
@@ -190,11 +182,11 @@ function ReportsView() {
         return Number.isFinite(fallback) ? fallback : 0;
       };
 
-      if (contribRes.error) console.warn("contrib error", contribRes.error);
-      if (spentRes.error) console.warn("spent error", spentRes.error);
+      if (contribRes.error) console.warn('contrib error', contribRes.error);
+      if (spentRes.error) console.warn('spent error', spentRes.error);
 
-      const contrib = pickNumber(contribRes.data, "contrib");
-      const spent = pickNumber(spentRes.data, "spent");
+      const contrib = pickNumber(contribRes.data, 'contrib');
+      const spent = pickNumber(spentRes.data, 'spent');
       setFundRow({
         contrib,
         spent,
@@ -264,21 +256,17 @@ function ReportsView() {
       setDetails(houseRows);
     } catch (error) {
       console.error(error);
-      setMessage("Gagal memuat data ringkasan.");
+      setMessage('Gagal memuat data ringkasan.');
     } finally {
       setLoading(false);
     }
   }
 
   const displayedOwners =
-    ownerFilter === "Semua"
-      ? ownerRows
-      : ownerRows.filter((row) => row.owner === ownerFilter);
+    ownerFilter === 'Semua' ? ownerRows : ownerRows.filter((row) => row.owner === ownerFilter);
 
   const balanceAccent =
-    fundRow.balance < 0
-      ? "text-red-600 font-semibold"
-      : "text-blue-600 font-semibold";
+    fundRow.balance < 0 ? 'text-red-600 font-semibold' : 'text-blue-600 font-semibold';
 
   return (
     <div className="space-y-6">
@@ -308,9 +296,7 @@ function ReportsView() {
             <select
               value={ownerFilter}
               onChange={(e) =>
-                setOwnerFilter(
-                  e.target.value as (typeof OWNER_FILTER_OPTIONS)[number],
-                )
+                setOwnerFilter(e.target.value as (typeof OWNER_FILTER_OPTIONS)[number])
               }
               className="rounded-lg border border-blue-200 bg-white px-3 py-2"
             >
@@ -334,12 +320,10 @@ function ReportsView() {
       )}
 
       <section className="rounded-2xl border border-blue-100 bg-white p-4 shadow-sm sm:p-6">
-        <h2 className="text-lg font-semibold text-blue-700">
-          Ringkasan Pemilik & Dana
-        </h2>
+        <h2 className="text-lg font-semibold text-blue-700">Ringkasan Pemilik & Dana</h2>
         <p className="text-xs text-slate-500">
-          Sewa dan air dijumlahkan berdasarkan periode yang dipilih. Dana
-          perbaikan dilaporkan terpisah.
+          Sewa dan air dijumlahkan berdasarkan periode yang dipilih. Dana perbaikan dilaporkan
+          terpisah.
         </p>
 
         <div className="mt-4 overflow-x-auto">
@@ -347,31 +331,21 @@ function ReportsView() {
             <thead className="bg-blue-50/60 text-blue-600">
               <tr>
                 <th className="px-3 py-2 text-left">Pemilik</th>
-                <th className="px-3 py-2 text-right">
-                  Sewa (tagih / bayar / tunggak)
-                </th>
-                <th className="px-3 py-2 text-right">
-                  Air (tagih / bayar / tunggak)
-                </th>
+                <th className="px-3 py-2 text-right">Sewa (tagih / bayar / tunggak)</th>
+                <th className="px-3 py-2 text-right">Air (tagih / bayar / tunggak)</th>
               </tr>
             </thead>
             <tbody>
               {loading && (
                 <tr>
-                  <td
-                    colSpan={3}
-                    className="px-3 py-4 text-center text-slate-400"
-                  >
+                  <td colSpan={3} className="px-3 py-4 text-center text-slate-400">
                     Memuat ringkasan...
                   </td>
                 </tr>
               )}
               {!loading && displayedOwners.length === 0 && (
                 <tr>
-                  <td
-                    colSpan={3}
-                    className="px-3 py-4 text-center text-slate-400"
-                  >
+                  <td colSpan={3} className="px-3 py-4 text-center text-slate-400">
                     Tidak ada data untuk filter ini.
                   </td>
                 </tr>
@@ -379,20 +353,14 @@ function ReportsView() {
               {!loading &&
                 displayedOwners.map((row) => (
                   <tr key={row.owner} className="border-t border-blue-100">
-                    <td className="px-3 py-3 font-semibold text-slate-800">
-                      {row.owner}
+                    <td className="px-3 py-3 font-semibold text-slate-800">{row.owner}</td>
+                    <td className="px-3 py-3 text-right">
+                      {idr(row.rent_bill)} / {idr(row.rent_paid)}{' '}
+                      <span className={formatDueAccent(row.rent_due)}>/ {idr(row.rent_due)}</span>
                     </td>
                     <td className="px-3 py-3 text-right">
-                      {idr(row.rent_bill)} / {idr(row.rent_paid)}{" "}
-                      <span className={formatDueAccent(row.rent_due)}>
-                        / {idr(row.rent_due)}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3 text-right">
-                      {idr(row.water_bill)} / {idr(row.water_paid)}{" "}
-                      <span className={formatDueAccent(row.water_due)}>
-                        / {idr(row.water_due)}
-                      </span>
+                      {idr(row.water_bill)} / {idr(row.water_paid)}{' '}
+                      <span className={formatDueAccent(row.water_due)}>/ {idr(row.water_due)}</span>
                     </td>
                   </tr>
                 ))}
@@ -402,9 +370,7 @@ function ReportsView() {
       </section>
 
       <section className="rounded-2xl border border-blue-100 bg-white p-4 shadow-sm sm:p-6">
-        <h3 className="text-base font-semibold text-blue-700">
-          Ringkasan Dana Perbaikan
-        </h3>
+        <h3 className="text-base font-semibold text-blue-700">Ringkasan Dana Perbaikan</h3>
         <div className="mt-3 overflow-x-auto">
           <table className="min-w-full text-sm sm:text-base">
             <thead className="bg-blue-50/60 text-blue-600">
@@ -417,14 +383,10 @@ function ReportsView() {
             </thead>
             <tbody>
               <tr className="border-t border-blue-100">
-                <td className="px-3 py-3 font-semibold text-slate-800">
-                  Dana Perbaikan
-                </td>
+                <td className="px-3 py-3 font-semibold text-slate-800">Dana Perbaikan</td>
                 <td className="px-3 py-3 text-right">{idr(fundRow.contrib)}</td>
                 <td className="px-3 py-3 text-right">{idr(fundRow.spent)}</td>
-                <td className={`px-3 py-3 text-right ${balanceAccent}`}>
-                  {idr(fundRow.balance)}
-                </td>
+                <td className={`px-3 py-3 text-right ${balanceAccent}`}>{idr(fundRow.balance)}</td>
               </tr>
             </tbody>
           </table>
@@ -442,21 +404,14 @@ function ReportsView() {
               <tr>
                 <th className="px-3 py-2 text-left">Rumah</th>
                 <th className="px-3 py-2 text-left">Pemilik</th>
-                <th className="px-3 py-2 text-right">
-                  Sewa (tagih / bayar / tunggak)
-                </th>
-                <th className="px-3 py-2 text-right">
-                  Air (tagih / bayar / tunggak)
-                </th>
+                <th className="px-3 py-2 text-right">Sewa (tagih / bayar / tunggak)</th>
+                <th className="px-3 py-2 text-right">Air (tagih / bayar / tunggak)</th>
               </tr>
             </thead>
             <tbody>
               {loading && (
                 <tr>
-                  <td
-                    colSpan={4}
-                    className="px-3 py-4 text-center text-slate-400"
-                  >
+                  <td colSpan={4} className="px-3 py-4 text-center text-slate-400">
                     Memuat detail rumah...
                   </td>
                 </tr>
@@ -474,16 +429,12 @@ function ReportsView() {
                     </td>
                     <td className="px-3 py-3 text-slate-700">{row.owner}</td>
                     <td className="px-3 py-3 text-right">
-                      {idr(row.rent_bill)} / {idr(row.rent_paid)}{" "}
-                      <span className={formatDueAccent(row.rent_due)}>
-                        / {idr(row.rent_due)}
-                      </span>
+                      {idr(row.rent_bill)} / {idr(row.rent_paid)}{' '}
+                      <span className={formatDueAccent(row.rent_due)}>/ {idr(row.rent_due)}</span>
                     </td>
                     <td className="px-3 py-3 text-right">
-                      {idr(row.water_bill)} / {idr(row.water_paid)}{" "}
-                      <span className={formatDueAccent(row.water_due)}>
-                        / {idr(row.water_due)}
-                      </span>
+                      {idr(row.water_bill)} / {idr(row.water_paid)}{' '}
+                      <span className={formatDueAccent(row.water_due)}>/ {idr(row.water_due)}</span>
                     </td>
                   </tr>
                 ))}

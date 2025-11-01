@@ -1,14 +1,18 @@
-"use client";
-import { useRouter } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
-import { useState } from "react";
-import { Input } from "@/components/ui/Input";
-import { Button } from "@/components/ui/Button";
-import { Card } from "@/components/ui/Card";
+'use client';
+
+// Login page authenticates users via Supabase; formatting only, no behavior changes.
+
+import { createClient } from '@supabase/supabase-js';
+import { useRouter } from 'next/navigation';
+import { useState } from 'react';
+
+import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
+import { Input } from '@/components/ui/Input';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
 export default function LoginPage() {
@@ -24,7 +28,7 @@ export default function LoginPage() {
     const password = (form.password as HTMLInputElement).value;
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) setError(error.message);
-    else router.replace("/dashboard");
+    else router.replace('/dashboard');
     setLoading(false);
   }
 
@@ -63,16 +67,9 @@ export default function LoginPage() {
               required
             />
           </div>
-          {error && (
-            <p className="text-center text-sm text-[var(--danger)]">{error}</p>
-          )}
-          <Button
-            type="submit"
-            disabled={loading}
-            className="w-full"
-            variant="primary"
-          >
-            {loading ? "Memeriksa..." : "Masuk"}
+          {error && <p className="text-center text-sm text-[var(--danger)]">{error}</p>}
+          <Button type="submit" disabled={loading} className="w-full" variant="primary">
+            {loading ? 'Memeriksa...' : 'Masuk'}
           </Button>
         </form>
       </Card>

@@ -1,16 +1,20 @@
-"use client";
+'use client';
 
-import * as React from "react";
-import { supabase } from "@/lib/supabase";
-import { currentPeriodISO, isoToMonth } from "@/lib/period";
-import { idr } from "@/lib/format";
-import { AuthGate } from "@/components/AuthGate";
+// Payments page listing rent and utility transactions; cosmetic tweaks only, no behavior changes.
+
+import * as React from 'react';
+
+import { AuthGate } from '@/components/AuthGate';
+
+import { idr } from '@/lib/format';
+import { currentPeriodISO, isoToMonth } from '@/lib/period';
+import { supabase } from '@/lib/supabase';
 
 type PaymentRow = {
   id: string;
   house_id: string;
   period: string;
-  kind: "rent" | "water" | "repair_contrib" | "other";
+  kind: 'rent' | 'water' | 'repair_contrib' | 'other';
   amount: number;
   paid_at: string | null;
   method: string | null;
@@ -30,78 +34,62 @@ type DueStatus = {
 };
 
 const KIND_OPTIONS = [
-  { value: "all", label: "Semua" },
-  { value: "rent", label: "Sewa" },
-  { value: "water", label: "Air" },
-  { value: "repair_contrib", label: "Dana Perbaikan" },
-  { value: "other", label: "Lainnya" },
+  { value: 'all', label: 'Semua' },
+  { value: 'rent', label: 'Sewa' },
+  { value: 'water', label: 'Air' },
+  { value: 'repair_contrib', label: 'Dana Perbaikan' },
+  { value: 'other', label: 'Lainnya' },
 ] as const;
 
-const isAdmin =
-  process.env.NEXT_PUBLIC_PAYMENTS_ALLOW_OVERPAY === "true" || false;
+const isAdmin = process.env.NEXT_PUBLIC_PAYMENTS_ALLOW_OVERPAY === 'true' || false;
 
 function isoFirstDayFromMonth(value: string): string {
   if (!value) return currentPeriodISO();
-  const [year, month] = value.split("-");
+  const [year, month] = value.split('-');
   if (!year || !month) return currentPeriodISO();
-  return `${year}-${month.padStart(2, "0")}-01`;
+  return `${year}-${month.padStart(2, '0')}-01`;
 }
 
 function parseNumberLoose(v: string): number | null {
   if (!v) return null;
-  const cleaned = String(v).replace(/\./g, "").replace(",", ".");
+  const cleaned = String(v).replace(/\./g, '').replace(',', '.');
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : null;
 }
 
 function PaymentsPageInner() {
-  const [houses, setHouses] = React.useState<
-    { id: string; code: string; owner: string }[]
-  >([]);
-  const [filterMonth, setFilterMonth] = React.useState(() =>
-    currentPeriodISO().slice(0, 7),
-  );
-  const [filterKind, setFilterKind] =
-    React.useState<(typeof KIND_OPTIONS)[number]["value"]>("all");
+  const [houses, setHouses] = React.useState<{ id: string; code: string; owner: string }[]>([]);
+  const [filterMonth, setFilterMonth] = React.useState(() => currentPeriodISO().slice(0, 7));
+  const [filterKind, setFilterKind] = React.useState<(typeof KIND_OPTIONS)[number]['value']>('all');
   const [includeVoided, setIncludeVoided] = React.useState(false);
   const [payments, setPayments] = React.useState<PaymentRow[]>([]);
   const [loading, setLoading] = React.useState(false);
 
-  const [rentStatus, setRentStatus] = React.useState<Record<string, DueStatus>>(
-    {},
-  );
-  const [waterStatus, setWaterStatus] = React.useState<
-    Record<string, DueStatus>
-  >({});
+  const [rentStatus, setRentStatus] = React.useState<Record<string, DueStatus>>({});
+  const [waterStatus, setWaterStatus] = React.useState<Record<string, DueStatus>>({});
 
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [editForm, setEditForm] = React.useState({
-    amount: "",
-    paid_at: "",
-    method: "",
-    note: "",
+    amount: '',
+    paid_at: '',
+    method: '',
+    note: '',
   });
 
   const [addForm, setAddForm] = React.useState({
-    house_id: "",
-    kind: "rent" as PaymentRow["kind"],
-    amount: "",
+    house_id: '',
+    kind: 'rent' as PaymentRow['kind'],
+    amount: '',
     paid_at: new Date().toISOString().slice(0, 10),
-    method: "",
-    note: "",
+    method: '',
+    note: '',
   });
 
-  const periodISO = React.useMemo(
-    () => isoFirstDayFromMonth(filterMonth),
-    [filterMonth],
-  );
+  const periodISO = React.useMemo(() => isoFirstDayFromMonth(filterMonth), [filterMonth]);
 
   React.useEffect(() => {
     (async () => {
-      const { data } = await supabase
-        .from("houses")
-        .select("id,code,owner")
-        .order("code");
+      const { data } = await supabase.from('houses').select('id,code,owner').order('code');
       if (data) setHouses(data as any);
     })();
   }, []);
@@ -114,30 +102,27 @@ function PaymentsPageInner() {
   async function reload() {
     setLoading(true);
     const query = supabase
-      .from("payments")
+      .from('payments')
       .select(
-        "id,house_id,period,kind,amount,paid_at,method,note,voided_at,created_at, houses:house_id(code,owner)",
+        'id,house_id,period,kind,amount,paid_at,method,note,voided_at,created_at, houses:house_id(code,owner)'
       )
-      .eq("period", periodISO)
-      .order("created_at", { ascending: false });
+      .eq('period', periodISO)
+      .order('created_at', { ascending: false });
 
-    const filteredQuery =
-      filterKind === "all" ? query : query.eq("kind", filterKind);
+    const filteredQuery = filterKind === 'all' ? query : query.eq('kind', filterKind);
 
-    const finalQuery = includeVoided
-      ? filteredQuery
-      : filteredQuery.is("voided_at", null);
+    const finalQuery = includeVoided ? filteredQuery : filteredQuery.is('voided_at', null);
 
     const [paymentsRes, rentRes, waterRes] = await Promise.all([
       finalQuery,
       supabase
-        .from("v_rent_status")
-        .select("house_id,rent_bill,rent_paid,rent_due")
-        .eq("period", periodISO),
+        .from('v_rent_status')
+        .select('house_id,rent_bill,rent_paid,rent_due')
+        .eq('period', periodISO),
       supabase
-        .from("v_water_status")
-        .select("house_id,water_bill,water_paid,water_due")
-        .eq("period", periodISO),
+        .from('v_water_status')
+        .select('house_id,water_bill,water_paid,water_due')
+        .eq('period', periodISO),
     ]);
 
     if (!paymentsRes.error && paymentsRes.data) {
@@ -145,7 +130,7 @@ function PaymentsPageInner() {
         paymentsRes.data.map((row: any) => ({
           ...row,
           house: row.houses,
-        })),
+        }))
       );
     }
     if (!rentRes.error && rentRes.data) {
@@ -174,26 +159,22 @@ function PaymentsPageInner() {
   }
 
   function getHouseInfo(houseId: string | null | undefined) {
-    if (!houseId) return { code: "-", owner: "-" };
+    if (!houseId) return { code: '-', owner: '-' };
     const house = houses.find((h) => h.id === houseId);
     return {
-      code: house?.code ?? "-",
-      owner: house?.owner ?? "-",
+      code: house?.code ?? '-',
+      owner: house?.owner ?? '-',
     };
   }
 
-  function getLimit(row: {
-    house_id: string;
-    kind: PaymentRow["kind"];
-    currentAmount?: number;
-  }) {
-    if (row.kind === "rent") {
+  function getLimit(row: { house_id: string; kind: PaymentRow['kind']; currentAmount?: number }) {
+    if (row.kind === 'rent') {
       const status = rentStatus[row.house_id];
       if (!status) return Infinity;
       const base = status.due + (row.currentAmount ?? 0);
       return Math.max(base, 0);
     }
-    if (row.kind === "water") {
+    if (row.kind === 'water') {
       const status = waterStatus[row.house_id];
       if (!status) return Infinity;
       const base = status.due + (row.currentAmount ?? 0);
@@ -206,26 +187,26 @@ function PaymentsPageInner() {
     setEditingId(row.id);
     setEditForm({
       amount: String(row.amount),
-      paid_at: row.paid_at?.slice(0, 10) ?? "",
-      method: row.method ?? "",
-      note: row.note ?? "",
+      paid_at: row.paid_at?.slice(0, 10) ?? '',
+      method: row.method ?? '',
+      note: row.note ?? '',
     });
   }
 
   function cancelEdit() {
     setEditingId(null);
     setEditForm({
-      amount: "",
-      paid_at: "",
-      method: "",
-      note: "",
+      amount: '',
+      paid_at: '',
+      method: '',
+      note: '',
     });
   }
 
   async function saveEdit(row: PaymentRow) {
     const amountNum = parseNumberLoose(editForm.amount);
     if (amountNum == null || amountNum <= 0) {
-      alert("Nominal tidak valid.");
+      alert('Nominal tidak valid.');
       return;
     }
     const limit = getLimit({
@@ -243,14 +224,14 @@ function PaymentsPageInner() {
       if (!proceed) return;
     }
     const { error } = await supabase
-      .from("payments")
+      .from('payments')
       .update({
         amount: amountNum,
         paid_at: editForm.paid_at || null,
         method: editForm.method || null,
         note: editForm.note || null,
       })
-      .eq("id", row.id);
+      .eq('id', row.id);
     if (error) {
       alert(error.message);
       return;
@@ -260,11 +241,11 @@ function PaymentsPageInner() {
   }
 
   async function voidPayment(id: string) {
-    const confirmVoid = confirm("Batalkan pembayaran ini?");
+    const confirmVoid = confirm('Batalkan pembayaran ini?');
     if (!confirmVoid) return;
-    const { error } = await supabase.rpc("void_payment", {
+    const { error } = await supabase.rpc('void_payment', {
       p_id: id,
-      p_reason: "void via payments page",
+      p_reason: 'void via payments page',
     });
     if (error) {
       alert(error.message);
@@ -275,12 +256,12 @@ function PaymentsPageInner() {
 
   async function addPayment() {
     if (!addForm.house_id) {
-      alert("Pilih rumah terlebih dahulu.");
+      alert('Pilih rumah terlebih dahulu.');
       return;
     }
     const amountNum = parseNumberLoose(addForm.amount);
     if (amountNum == null || amountNum <= 0) {
-      alert("Nominal tidak valid.");
+      alert('Nominal tidak valid.');
       return;
     }
     const limit = getLimit({
@@ -297,7 +278,7 @@ function PaymentsPageInner() {
       const proceed = confirm(`${message} Tetap simpan?`);
       if (!proceed) return;
     }
-    const { error } = await supabase.from("payments").insert({
+    const { error } = await supabase.from('payments').insert({
       house_id: addForm.house_id,
       period: periodISO,
       kind: addForm.kind,
@@ -312,10 +293,10 @@ function PaymentsPageInner() {
     }
     setAddForm((prev) => ({
       ...prev,
-      house_id: "",
-      amount: "",
-      method: "",
-      note: "",
+      house_id: '',
+      amount: '',
+      method: '',
+      note: '',
     }));
     await reload();
   }
@@ -339,9 +320,7 @@ function PaymentsPageInner() {
             <select
               value={filterKind}
               onChange={(e) =>
-                setFilterKind(
-                  e.target.value as (typeof KIND_OPTIONS)[number]["value"],
-                )
+                setFilterKind(e.target.value as (typeof KIND_OPTIONS)[number]['value'])
               }
               className="rounded-lg border border-blue-200 bg-white px-3 py-2"
             >
@@ -364,16 +343,12 @@ function PaymentsPageInner() {
       </div>
 
       <div className="rounded-xl border border-blue-100 bg-white p-4 shadow-sm sm:p-6">
-        <h2 className="text-lg font-semibold text-blue-700">
-          Tambah Pembayaran
-        </h2>
+        <h2 className="text-lg font-semibold text-blue-700">Tambah Pembayaran</h2>
         <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           <select
             className="rounded-lg border border-blue-200 bg-white px-3 py-2"
             value={addForm.house_id}
-            onChange={(e) =>
-              setAddForm((prev) => ({ ...prev, house_id: e.target.value }))
-            }
+            onChange={(e) => setAddForm((prev) => ({ ...prev, house_id: e.target.value }))}
           >
             <option value="">Pilih Rumah</option>
             {houses.map((house) => (
@@ -388,11 +363,11 @@ function PaymentsPageInner() {
             onChange={(e) =>
               setAddForm((prev) => ({
                 ...prev,
-                kind: e.target.value as PaymentRow["kind"],
+                kind: e.target.value as PaymentRow['kind'],
               }))
             }
           >
-            {KIND_OPTIONS.filter((opt) => opt.value !== "all").map((opt) => (
+            {KIND_OPTIONS.filter((opt) => opt.value !== 'all').map((opt) => (
               <option key={opt.value} value={opt.value}>
                 {opt.label}
               </option>
@@ -403,35 +378,27 @@ function PaymentsPageInner() {
             placeholder="Nominal"
             className="rounded-lg border border-blue-200 bg-white px-3 py-2"
             value={addForm.amount}
-            onChange={(e) =>
-              setAddForm((prev) => ({ ...prev, amount: e.target.value }))
-            }
+            onChange={(e) => setAddForm((prev) => ({ ...prev, amount: e.target.value }))}
           />
           <input
             type="date"
             className="rounded-lg border border-blue-200 bg-white px-3 py-2"
             value={addForm.paid_at}
-            onChange={(e) =>
-              setAddForm((prev) => ({ ...prev, paid_at: e.target.value }))
-            }
+            onChange={(e) => setAddForm((prev) => ({ ...prev, paid_at: e.target.value }))}
           />
           <input
             type="text"
             placeholder="Metode (opsional)"
             className="rounded-lg border border-blue-200 bg-white px-3 py-2"
             value={addForm.method}
-            onChange={(e) =>
-              setAddForm((prev) => ({ ...prev, method: e.target.value }))
-            }
+            onChange={(e) => setAddForm((prev) => ({ ...prev, method: e.target.value }))}
           />
           <input
             type="text"
             placeholder="Catatan (opsional)"
             className="rounded-lg border border-blue-200 bg-white px-3 py-2"
             value={addForm.note}
-            onChange={(e) =>
-              setAddForm((prev) => ({ ...prev, note: e.target.value }))
-            }
+            onChange={(e) => setAddForm((prev) => ({ ...prev, note: e.target.value }))}
           />
         </div>
         <div className="mt-3">
@@ -462,20 +429,14 @@ function PaymentsPageInner() {
           <tbody>
             {loading && (
               <tr>
-                <td
-                  colSpan={9}
-                  className="px-3 py-4 text-center text-slate-400"
-                >
+                <td colSpan={9} className="px-3 py-4 text-center text-slate-400">
                   Memuat...
                 </td>
               </tr>
             )}
             {!loading && payments.length === 0 && (
               <tr>
-                <td
-                  colSpan={9}
-                  className="px-3 py-4 text-center text-slate-400"
-                >
+                <td colSpan={9} className="px-3 py-4 text-center text-slate-400">
                   Tidak ada pembayaran pada periode ini.
                 </td>
               </tr>
@@ -486,7 +447,7 @@ function PaymentsPageInner() {
                 const isVoided = Boolean(row.voided_at);
                 const isEditing = editingId === row.id;
                 const limit =
-                  row.kind === "rent" || row.kind === "water"
+                  row.kind === 'rent' || row.kind === 'water'
                     ? getLimit({
                         house_id: row.house_id,
                         kind: row.kind,
@@ -497,13 +458,11 @@ function PaymentsPageInner() {
                 return (
                   <tr
                     key={row.id}
-                    className={`border-t border-blue-100 ${isVoided ? "bg-red-50/40 text-slate-500" : "text-slate-700"}`}
+                    className={`border-t border-blue-100 ${isVoided ? 'bg-red-50/40 text-slate-500' : 'text-slate-700'}`}
                   >
                     <td className="px-3 py-2 font-semibold text-slate-800">
                       {code}
-                      <div className="text-xs font-normal text-slate-500">
-                        {owner}
-                      </div>
+                      <div className="text-xs font-normal text-slate-500">{owner}</div>
                     </td>
                     <td className="px-3 py-2">{isoToMonth(row.period)}</td>
                     <td className="px-3 py-2 capitalize">{row.kind}</td>
@@ -524,9 +483,7 @@ function PaymentsPageInner() {
                         idr(row.amount)
                       )}
                       {isEditing && limit !== Infinity && (
-                        <div className="text-xs text-blue-500">
-                          Maks: {idr(limit)}
-                        </div>
+                        <div className="text-xs text-blue-500">Maks: {idr(limit)}</div>
                       )}
                     </td>
                     <td className="px-3 py-2">
@@ -543,9 +500,9 @@ function PaymentsPageInner() {
                           className="rounded-lg border border-blue-200 px-2 py-1"
                         />
                       ) : row.paid_at ? (
-                        new Date(row.paid_at).toLocaleDateString("id-ID")
+                        new Date(row.paid_at).toLocaleDateString('id-ID')
                       ) : (
-                        "-"
+                        '-'
                       )}
                     </td>
                     <td className="px-3 py-2">
@@ -562,7 +519,7 @@ function PaymentsPageInner() {
                           className="rounded-lg border border-blue-200 px-2 py-1"
                         />
                       ) : (
-                        (row.method ?? "-")
+                        (row.method ?? '-')
                       )}
                     </td>
                     <td className="px-3 py-2">
@@ -579,7 +536,7 @@ function PaymentsPageInner() {
                           className="rounded-lg border border-blue-200 px-2 py-1"
                         />
                       ) : (
-                        (row.note ?? "-")
+                        (row.note ?? '-')
                       )}
                     </td>
                     <td className="px-3 py-2">
@@ -594,7 +551,7 @@ function PaymentsPageInner() {
                       )}
                     </td>
                     <td className="px-3 py-2">
-                        <div className="flex flex-wrap gap-2">
+                      <div className="flex flex-wrap gap-2">
                         {!isVoided && (
                           <>
                             {isEditing ? (

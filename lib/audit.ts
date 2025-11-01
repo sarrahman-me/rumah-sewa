@@ -1,26 +1,29 @@
-import { supabase } from "@/lib/supabase";
-import { getActorName } from "@/lib/actor";
+import { getActorName } from '@/lib/actor';
+import { supabase } from '@/lib/supabase';
 
 type AuditAction =
-  | "rent_full"
-  | "water_full"
-  | "rent_partial"
-  | "water_partial"
-  | "undo"
-  | "occupancy_set"
-  | "occupancy_clear"
-  | "rent_price_change";
+  | 'rent_full'
+  | 'water_full'
+  | 'rent_partial'
+  | 'water_partial'
+  | 'undo'
+  | 'occupancy_set'
+  | 'occupancy_clear'
+  | 'rent_price_change';
 
 type AuditPayload = {
   action: AuditAction;
   house_id?: string | null;
   house_code?: string | null;
   period?: string | null;
-  kind?: "rent" | "water" | null;
+  kind?: 'rent' | 'water' | null;
   amount?: number | null;
   note?: string | null;
 };
 
+/**
+ * Logs an audit entry via the database RPC; formatting only, no behavior changes.
+ */
 export async function writeAudit(payload: AuditPayload) {
   const actor_name = await getActorName();
   if (!actor_name) return;
@@ -30,7 +33,7 @@ export async function writeAudit(payload: AuditPayload) {
       ? new Date(payload.period)
       : null;
 
-  const { error } = await supabase.rpc("log_audit", {
+  const { error } = await supabase.rpc('log_audit', {
     p_actor_name: actor_name,
     p_action: payload.action,
     p_house_id: payload.house_id ?? null,
@@ -42,6 +45,6 @@ export async function writeAudit(payload: AuditPayload) {
   });
 
   if (error) {
-    console.error("[audit] rpc log_audit failed", { error, payload });
+    console.error('[audit] rpc log_audit failed', { error, payload });
   }
 }

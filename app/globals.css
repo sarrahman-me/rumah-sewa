@@ -1,18 +1,18 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 :root {
   --bg: #f7f9fc;
+  --border: #e5e7eb;
   --card: #ffffff;
+  --danger: #dc2626;
   --ink: #1f2937;
   --muted: #6b7280;
   --primary: #2563eb;
-  --success: #16a34a;
-  --danger: #dc2626;
-  --warning: #d97706;
-  --ring: rgba(37, 99, 235, 0.35);
   --radius: 12px;
+  --ring: rgba(37, 99, 235, 0.35);
   --shadow: 0 8px 24px rgba(16, 24, 40, 0.06);
-  --border: #e5e7eb;
+  --success: #16a34a;
+  --warning: #d97706;
 }
 
 *,
@@ -27,7 +27,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--ink);
-  font-family: var(--font-geist-sans, "Inter", system-ui, sans-serif);
+  font-family: var(--font-geist-sans, 'Inter', system-ui, sans-serif);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -168,7 +168,9 @@ small {
   padding: 10px 12px;
   outline: none;
   background: #fff;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
 }
 
 .input:focus,
@@ -189,7 +191,10 @@ small {
   font-weight: 600;
   background: transparent;
   color: var(--ink);
-  transition: background-color 0.2s, color 0.2s, box-shadow 0.2s;
+  transition:
+    background-color 0.2s,
+    color 0.2s,
+    box-shadow 0.2s;
   cursor: pointer;
 }
 

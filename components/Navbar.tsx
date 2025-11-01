@@ -1,17 +1,20 @@
-"use client";
+'use client';
 
-import Link from "next/link";
-import { useEffect, useState } from "react";
-import type { Session } from "@supabase/supabase-js";
-import { supabase } from "@/lib/supabase";
+// Navbar displays top-level navigation based on auth state; formatting only, no behavior changes.
+
+import type { Session } from '@supabase/supabase-js';
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
+
+import { supabase } from '@/lib/supabase';
 
 const NAV_LINKS = [
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/water", label: "Air" },
-  { href: "/payments", label: "Pembayaran" },
-  { href: "/reports", label: "Laporan" },
-  { href: "/repairs", label: "Perbaikan" },
-  { href: "/rents", label: "Sewa" },
+  { href: '/dashboard', label: 'Dashboard' },
+  { href: '/water', label: 'Air' },
+  { href: '/payments', label: 'Pembayaran' },
+  { href: '/reports', label: 'Laporan' },
+  { href: '/repairs', label: 'Perbaikan' },
+  { href: '/rents', label: 'Sewa' },
 ] as const;
 
 export function Navbar() {
@@ -22,11 +25,9 @@ export function Navbar() {
     supabase.auth.getSession().then(({ data }) => {
       if (mounted) setSession(data.session ?? null);
     });
-    const { data: listener } = supabase.auth.onAuthStateChange(
-      (_event, authSession) => {
-        setSession(authSession ?? null);
-      },
-    );
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, authSession) => {
+      setSession(authSession ?? null);
+    });
     return () => {
       mounted = false;
       listener?.subscription?.unsubscribe();
@@ -35,9 +36,7 @@ export function Navbar() {
 
   const showLogin = session === null;
 
-  const navLinks = session
-    ? [...NAV_LINKS, { href: "/audits", label: "Audit" }]
-    : NAV_LINKS;
+  const navLinks = session ? [...NAV_LINKS, { href: '/audits', label: 'Audit' }] : NAV_LINKS;
 
   return (
     <div className="mx-auto flex w-full max-w-[1100px] flex-wrap items-center justify-between gap-4 px-6 py-5">

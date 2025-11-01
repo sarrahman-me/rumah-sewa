@@ -1,14 +1,16 @@
-"use client";
+'use client';
 
-import * as React from "react";
-import { AuthGate } from "@/components/AuthGate";
-import { supabase } from "@/lib/supabase";
-import { writeAudit } from "@/lib/audit";
-import { currentPeriodISO, isoToMonth, monthToISOFirst } from "@/lib/period";
-import { idr } from "@/lib/format";
-import { Button } from "@/components/ui/Button";
-import { Badge } from "@/components/ui/Badge";
-import { Card } from "@/components/ui/Card";
+// Dashboard page for rental payments overview; style-only adjustments, no behavior changes.
+
+import * as React from 'react';
+
+import { AuthGate } from '@/components/AuthGate';
+import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
+import { DateField } from '@/components/ui/DateField';
+import { Input } from '@/components/ui/Input';
+import { Modal } from '@/components/ui/Modal';
 import {
   Table,
   TableBody,
@@ -18,15 +20,17 @@ import {
   TableHeaderCell,
   TableRow,
   TableFooter,
-} from "@/components/ui/Table";
-import { Input } from "@/components/ui/Input";
-import { DateField } from "@/components/ui/DateField";
-import { Modal } from "@/components/ui/Modal";
-import { cx } from "@/components/ui/utils";
+} from '@/components/ui/Table';
+import { cx } from '@/components/ui/utils';
 
-type Mode = "single" | "range";
-type PaymentKind = "rent" | "water";
-type ActionType = "rent-full" | "water-full" | "rent-partial" | "water-partial";
+import { writeAudit } from '@/lib/audit';
+import { idr } from '@/lib/format';
+import { currentPeriodISO, isoToMonth, monthToISOFirst } from '@/lib/period';
+import { supabase } from '@/lib/supabase';
+
+type Mode = 'single' | 'range';
+type PaymentKind = 'rent' | 'water';
+type ActionType = 'rent-full' | 'water-full' | 'rent-partial' | 'water-partial';
 
 type RentStatus = {
   house_id: string;
@@ -80,14 +84,14 @@ type DetailModalState = {
 type OccupancyModalState = {
   house: Row;
   periodMonth: string;
-  status: "kosong" | "terisi";
+  status: 'kosong' | 'terisi';
   note: string;
 };
 
 const todayISO = new Date().toISOString().slice(0, 10);
 const allowOverpay =
-  typeof window !== "undefined" &&
-  (process.env.NEXT_PUBLIC_PAYMENTS_ALLOW_OVERPAY === "true" || false);
+  typeof window !== 'undefined' &&
+  (process.env.NEXT_PUBLIC_PAYMENTS_ALLOW_OVERPAY === 'true' || false);
 
 function num(value: unknown) {
   const parsed = Number(value);
@@ -106,7 +110,7 @@ function monthRange(fromISO: string, toISO: string) {
   end.setDate(1);
   while (current <= end) {
     const y = current.getFullYear();
-    const m = String(current.getMonth() + 1).padStart(2, "0");
+    const m = String(current.getMonth() + 1).padStart(2, '0');
     result.push(`${y}-${m}-01`);
     current.setMonth(current.getMonth() + 1);
   }
@@ -115,29 +119,25 @@ function monthRange(fromISO: string, toISO: string) {
 
 function getActionLabel(type: ActionType) {
   switch (type) {
-    case "rent-full":
-      return "Sewa Lunas";
-    case "water-full":
-      return "Air Lunas";
-    case "rent-partial":
-      return "Bayar Sewa Sebagian";
-    case "water-partial":
-      return "Bayar Air Sebagian";
+    case 'rent-full':
+      return 'Sewa Lunas';
+    case 'water-full':
+      return 'Air Lunas';
+    case 'rent-partial':
+      return 'Bayar Sewa Sebagian';
+    case 'water-partial':
+      return 'Bayar Air Sebagian';
     default:
-      return "Pembayaran";
+      return 'Pembayaran';
   }
 }
 
 function typeToKind(type: ActionType): PaymentKind {
-  return type.startsWith("rent") ? "rent" : "water";
+  return type.startsWith('rent') ? 'rent' : 'water';
 }
 
 function stickyCellClass(extra?: string) {
-  return cx(
-    "sticky left-0 z-[2] bg-white",
-    "shadow-[1px_0_0_0_var(--border)]",
-    extra,
-  );
+  return cx('sticky left-0 z-[2] bg-white', 'shadow-[1px_0_0_0_var(--border)]', extra);
 }
 
 type StatusMaps = {
@@ -148,7 +148,7 @@ type StatusMaps = {
 
 function DashboardInner() {
   const initialMonth = React.useMemo(() => isoToMonth(currentPeriodISO()), []);
-  const [mode, setMode] = React.useState<Mode>("single");
+  const [mode, setMode] = React.useState<Mode>('single');
   const [singleMonth, setSingleMonth] = React.useState(initialMonth);
   const [rangeFrom, setRangeFrom] = React.useState(initialMonth);
   const [rangeTo, setRangeTo] = React.useState(initialMonth);
@@ -162,15 +162,10 @@ function DashboardInner() {
   const [error, setError] = React.useState<string | null>(null);
   const [feedback, setFeedback] = React.useState<string | null>(null);
 
-  const [actionModal, setActionModal] = React.useState<ActionModalState | null>(
-    null,
-  );
+  const [actionModal, setActionModal] = React.useState<ActionModalState | null>(null);
   const [undoModal, setUndoModal] = React.useState<UndoModalState | null>(null);
-  const [detailModal, setDetailModal] = React.useState<DetailModalState | null>(
-    null,
-  );
-  const [occupancyModal, setOccupancyModal] =
-    React.useState<OccupancyModalState | null>(null);
+  const [detailModal, setDetailModal] = React.useState<DetailModalState | null>(null);
+  const [occupancyModal, setOccupancyModal] = React.useState<OccupancyModalState | null>(null);
   const [actionSubmitting, setActionSubmitting] = React.useState(false);
   const [undoSubmitting, setUndoSubmitting] = React.useState(false);
   const [isPending, startTransition] = React.useTransition();
@@ -184,7 +179,7 @@ function DashboardInner() {
   const singlePeriodISO = monthToISOFirst(singleMonth);
   const rangeFromISO = monthToISOFirst(rangeFrom);
   const rangeToISO = monthToISOFirst(rangeTo);
-  const isRange = mode === "range";
+  const isRange = mode === 'range';
 
   const loadData = React.useCallback(async () => {
     setError(null);
@@ -192,44 +187,29 @@ function DashboardInner() {
     setFeedback(null);
 
     const periodFilter =
-      mode === "single"
-        ? { eq: singlePeriodISO }
-        : { gte: rangeFromISO, lte: rangeToISO };
+      mode === 'single' ? { eq: singlePeriodISO } : { gte: rangeFromISO, lte: rangeToISO };
 
     const housesPromise = supabase
-      .from("houses")
-      .select("id,code,owner,is_repair_fund")
-      .order("code");
+      .from('houses')
+      .select('id,code,owner,is_repair_fund')
+      .order('code');
 
     let rentQuery = supabase
-      .from("v_rent_status")
-      .select("house_id,period,rent_bill,rent_paid,rent_due");
-    if ("eq" in periodFilter)
-      rentQuery = rentQuery.eq("period", periodFilter.eq);
-    else
-      rentQuery = rentQuery
-        .gte("period", periodFilter.gte)
-        .lte("period", periodFilter.lte);
+      .from('v_rent_status')
+      .select('house_id,period,rent_bill,rent_paid,rent_due');
+    if ('eq' in periodFilter) rentQuery = rentQuery.eq('period', periodFilter.eq);
+    else rentQuery = rentQuery.gte('period', periodFilter.gte).lte('period', periodFilter.lte);
 
     let waterQuery = supabase
-      .from("v_water_status")
-      .select("house_id,period,water_bill,water_paid,water_due");
-    if ("eq" in periodFilter)
-      waterQuery = waterQuery.eq("period", periodFilter.eq);
-    else
-      waterQuery = waterQuery
-        .gte("period", periodFilter.gte)
-        .lte("period", periodFilter.lte);
+      .from('v_water_status')
+      .select('house_id,period,water_bill,water_paid,water_due');
+    if ('eq' in periodFilter) waterQuery = waterQuery.eq('period', periodFilter.eq);
+    else waterQuery = waterQuery.gte('period', periodFilter.gte).lte('period', periodFilter.lte);
 
-    let vacancyQuery = supabase
-      .from("house_vacancies")
-      .select("house_id,period");
-    if ("eq" in periodFilter)
-      vacancyQuery = vacancyQuery.eq("period", periodFilter.eq);
+    let vacancyQuery = supabase.from('house_vacancies').select('house_id,period');
+    if ('eq' in periodFilter) vacancyQuery = vacancyQuery.eq('period', periodFilter.eq);
     else
-      vacancyQuery = vacancyQuery
-        .gte("period", periodFilter.gte)
-        .lte("period", periodFilter.lte);
+      vacancyQuery = vacancyQuery.gte('period', periodFilter.gte).lte('period', periodFilter.lte);
 
     const [
       { data: houses, error: housesErr },
@@ -244,7 +224,7 @@ function DashboardInner() {
           rentErr?.message ||
           waterErr?.message ||
           vacancyErr?.message ||
-          "Gagal memuat data.",
+          'Gagal memuat data.'
       );
       setLoading(false);
       return;
@@ -266,8 +246,8 @@ function DashboardInner() {
       };
     });
 
-    const rentMap: StatusMaps["rent"] = {};
-    const waterMap: StatusMaps["water"] = {};
+    const rentMap: StatusMaps['rent'] = {};
+    const waterMap: StatusMaps['water'] = {};
 
     for (const row of rentStatuses || []) {
       const houseId = row.house_id;
@@ -325,17 +305,14 @@ function DashboardInner() {
     loadData();
   }, [loadData]);
 
-  const ownerRows = React.useMemo(
-    () => rows.filter((row) => !row.is_repair_fund),
-    [rows],
-  );
+  const ownerRows = React.useMemo(() => rows.filter((row) => !row.is_repair_fund), [rows]);
   const rentTotals = React.useMemo(
     () => ({
       bill: ownerRows.reduce((sum, row) => sum + row.rent_bill, 0),
       paid: ownerRows.reduce((sum, row) => sum + row.rent_paid, 0),
       due: ownerRows.reduce((sum, row) => sum + row.rent_due, 0),
     }),
-    [ownerRows],
+    [ownerRows]
   );
   const waterTotals = React.useMemo(
     () => ({
@@ -343,7 +320,7 @@ function DashboardInner() {
       paid: ownerRows.reduce((sum, row) => sum + row.water_paid, 0),
       due: ownerRows.reduce((sum, row) => sum + row.water_due, 0),
     }),
-    [ownerRows],
+    [ownerRows]
   );
 
   const currentPeriodMonth = isRange ? rangeFrom : singleMonth;
@@ -360,21 +337,11 @@ function DashboardInner() {
       if (months.length === 0) return false;
       return months.every((month) => Boolean(vacancy[month]));
     },
-    [
-      statusMaps.vacancy,
-      isRange,
-      singlePeriodISO,
-      rangeFromISO,
-      rangeToISO,
-    ],
+    [statusMaps.vacancy, isRange, singlePeriodISO, rangeFromISO, rangeToISO]
   );
 
-  function getDueValue(
-    houseId: string,
-    kind: PaymentKind,
-    periodISO: string,
-  ): number {
-    if (kind === "rent") {
+  function getDueValue(houseId: string, kind: PaymentKind, periodISO: string): number {
+    if (kind === 'rent') {
       return num(statusMaps.rent[houseId]?.[periodISO]?.rent_due);
     }
     return num(statusMaps.water[houseId]?.[periodISO]?.water_due);
@@ -386,8 +353,8 @@ function DashboardInner() {
     setOccupancyModal({
       house,
       periodMonth,
-      status: vacant ? "kosong" : "terisi",
-      note: "",
+      status: vacant ? 'kosong' : 'terisi',
+      note: '',
     });
   }
 
@@ -396,16 +363,15 @@ function DashboardInner() {
     const paidAt = todayISO;
     const kind = typeToKind(type);
     const due = getDueValue(house.house_id, kind, currentPeriodISOSelected);
-    const amount =
-      type.endsWith("full") && due > 0 ? String(due.toFixed(0)) : "";
+    const amount = type.endsWith('full') && due > 0 ? String(due.toFixed(0)) : '';
     setActionModal({
       type,
       house,
       periodMonth,
       paidAt,
       amount,
-      method: "",
-      note: "",
+      method: '',
+      note: '',
     });
   }
 
@@ -414,36 +380,32 @@ function DashboardInner() {
     const periodISO = monthToISOFirst(occupancyModal.periodMonth);
     let errorMessage: string | null = null;
 
-    if (occupancyModal.status === "kosong") {
-      const { error } = await supabase
-        .from("house_vacancies")
-        .upsert(
-          {
-            house_id: occupancyModal.house.house_id,
-            period: periodISO,
-            note: occupancyModal.note || null,
-          },
-          { onConflict: "house_id,period" },
-        );
+    if (occupancyModal.status === 'kosong') {
+      const { error } = await supabase.from('house_vacancies').upsert(
+        {
+          house_id: occupancyModal.house.house_id,
+          period: periodISO,
+          note: occupancyModal.note || null,
+        },
+        { onConflict: 'house_id,period' }
+      );
       if (error) errorMessage = error.message;
     } else {
       const { error } = await supabase
-        .from("house_vacancies")
+        .from('house_vacancies')
         .delete()
-        .eq("house_id", occupancyModal.house.house_id)
-        .eq("period", periodISO);
+        .eq('house_id', occupancyModal.house.house_id)
+        .eq('period', periodISO);
       if (error) errorMessage = error.message;
     }
 
     if (errorMessage) {
-      setFeedback(errorMessage || "Gagal menyimpan status hunian.");
+      setFeedback(errorMessage || 'Gagal menyimpan status hunian.');
       return;
     }
 
     const occupancyAction =
-      occupancyModal.status === "kosong"
-        ? "occupancy_set"
-        : ("occupancy_clear" as const);
+      occupancyModal.status === 'kosong' ? 'occupancy_set' : ('occupancy_clear' as const);
     await writeAudit({
       action: occupancyAction,
       house_id: occupancyModal.house.house_id,
@@ -452,17 +414,17 @@ function DashboardInner() {
       note: occupancyModal.note || undefined,
     });
 
-    setFeedback("Status hunian disimpan.");
+    setFeedback('Status hunian disimpan.');
     setOccupancyModal(null);
     startTransition(() => {
       loadData();
     });
   }
-function openUndo(house: Row) {
+  function openUndo(house: Row) {
     setUndoModal({
       house,
       periodMonth: currentPeriodMonth,
-      kind: "rent",
+      kind: 'rent',
     });
   }
 
@@ -486,12 +448,9 @@ function openUndo(house: Row) {
         ? {
             ...prev,
             periodMonth,
-            amount:
-              prev.type.endsWith("full") && due > 0
-                ? String(due.toFixed(0))
-                : prev.amount,
+            amount: prev.type.endsWith('full') && due > 0 ? String(due.toFixed(0)) : prev.amount,
           }
-        : prev,
+        : prev
     );
   }
 
@@ -499,12 +458,12 @@ function openUndo(house: Row) {
     houseId: string,
     kind: PaymentKind,
     periodISO: string,
-    amount: number,
+    amount: number
   ) {
     setRows((prev) =>
       prev.map((row) => {
         if (row.house_id !== houseId) return row;
-        if (kind === "rent") {
+        if (kind === 'rent') {
           const due = Math.max(row.rent_due - amount, 0);
           return {
             ...row,
@@ -518,7 +477,7 @@ function openUndo(house: Row) {
           water_paid: row.water_paid + amount,
           water_due: due,
         };
-      }),
+      })
     );
 
     setStatusMaps((prev) => {
@@ -528,7 +487,7 @@ function openUndo(house: Row) {
       }
       const map = { ...next[kind][houseId] };
       const existing = { ...(map[periodISO] || {}) } as any;
-      if (kind === "rent") {
+      if (kind === 'rent') {
         existing.house_id = houseId;
         existing.period = periodISO;
         existing.rent_bill = num(existing.rent_bill);
@@ -554,13 +513,13 @@ function openUndo(house: Row) {
     const amountValue = Number(actionModal.amount);
 
     if (!amountValue || Number.isNaN(amountValue) || amountValue <= 0) {
-      setFeedback("Nominal harus diisi dan lebih besar dari 0.");
+      setFeedback('Nominal harus diisi dan lebih besar dari 0.');
       return;
     }
 
     const dueValue = getDueValue(actionModal.house.house_id, kind, periodISO);
     if (!allowOverpay && amountValue > dueValue + 0.0001) {
-      setFeedback("Nominal melebihi tunggakan yang tersisa.");
+      setFeedback('Nominal melebihi tunggakan yang tersisa.');
       return;
     }
 
@@ -570,12 +529,7 @@ function openUndo(house: Row) {
     const previousRows = rows;
     const previousStatus = statusMaps;
 
-    optimisticApplyPayment(
-      actionModal.house.house_id,
-      kind,
-      periodISO,
-      amountValue,
-    );
+    optimisticApplyPayment(actionModal.house.house_id, kind, periodISO, amountValue);
 
     const payload: Record<string, any> = {
       house_id: actionModal.house.house_id,
@@ -587,24 +541,24 @@ function openUndo(house: Row) {
     if (actionModal.method) payload.method = actionModal.method;
     if (actionModal.note) payload.note = actionModal.note;
 
-    const { error } = await supabase.from("payments").insert(payload);
+    const { error } = await supabase.from('payments').insert(payload);
 
     if (error) {
       setRows(previousRows);
       setStatusMaps(previousStatus);
       setActionSubmitting(false);
-      setFeedback(error.message || "Gagal menyimpan pembayaran.");
+      setFeedback(error.message || 'Gagal menyimpan pembayaran.');
       return;
     }
 
     const auditAction =
-      actionModal.type === "rent-full"
-        ? "rent_full"
-        : actionModal.type === "water-full"
-          ? "water_full"
-          : actionModal.type === "rent-partial"
-            ? "rent_partial"
-            : ("water_partial" as const);
+      actionModal.type === 'rent-full'
+        ? 'rent_full'
+        : actionModal.type === 'water-full'
+          ? 'water_full'
+          : actionModal.type === 'rent-partial'
+            ? 'rent_partial'
+            : ('water_partial' as const);
     await writeAudit({
       action: auditAction,
       house_id: actionModal.house.house_id,
@@ -616,7 +570,7 @@ function openUndo(house: Row) {
     });
 
     setActionSubmitting(false);
-    setFeedback("Pembayaran berhasil disimpan.");
+    setFeedback('Pembayaran berhasil disimpan.');
     setActionModal(null);
     startTransition(() => {
       loadData();
@@ -628,25 +582,25 @@ function openUndo(house: Row) {
     setUndoSubmitting(true);
     setFeedback(null);
     const periodISO = monthToISOFirst(undoModal.periodMonth);
-    const { data, error } = await supabase.rpc("void_last_payment", {
+    const { data, error } = await supabase.rpc('void_last_payment', {
       p_house: undoModal.house.house_id,
       p_period: periodISO,
       p_kind: kind,
-      p_reason: "undo via dashboard modal",
+      p_reason: 'undo via dashboard modal',
     });
     if (error) {
       setUndoSubmitting(false);
-      setFeedback(error.message || "Gagal membatalkan pembayaran.");
+      setFeedback(error.message || 'Gagal membatalkan pembayaran.');
       return;
     }
     if (!data) {
       setUndoSubmitting(false);
-      setFeedback("Tidak ada pembayaran untuk dibatalkan.");
+      setFeedback('Tidak ada pembayaran untuk dibatalkan.');
       return;
     }
 
     await writeAudit({
-      action: "undo",
+      action: 'undo',
       house_id: undoModal.house.house_id,
       house_code: undoModal.house.code,
       period: periodISO,
@@ -654,32 +608,29 @@ function openUndo(house: Row) {
     });
 
     setUndoSubmitting(false);
-    setFeedback("Pembayaran terakhir dibatalkan.");
+    setFeedback('Pembayaran terakhir dibatalkan.');
     setUndoModal(null);
     startTransition(() => {
       loadData();
     });
   }
 
-  const tableCaption = "Status pembayaran sewa dan air untuk setiap rumah";
+  const tableCaption = 'Status pembayaran sewa dan air untuk setiap rumah';
 
   return (
     <>
       <div className="page-stack">
         <div className="flex flex-col gap-2">
-          <h1 className="text-2xl font-semibold text-[var(--ink)]">
-            Dashboard
-          </h1>
+          <h1 className="text-2xl font-semibold text-[var(--ink)]">Dashboard</h1>
           <p className="text-sm text-[var(--muted)]">
-            Ringkasan status sewa &amp; air. Perbarui pembayaran melalui modal
-            aksi.
+            Ringkasan status sewa &amp; air. Perbarui pembayaran melalui modal aksi.
           </p>
         </div>
 
         <Card>
           <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-start">
             <div className="grid gap-3 md:grid-cols-2">
-              {mode === "single" ? (
+              {mode === 'single' ? (
                 <div className="field-group">
                   <label className="field-label" htmlFor="period-single">
                     Periode (bulan)
@@ -724,15 +675,15 @@ function openUndo(house: Row) {
               <div className="flex flex-wrap gap-2">
                 <Button
                   size="sm"
-                  variant={mode === "single" ? "primary" : "ghost"}
-                  onClick={() => setMode("single")}
+                  variant={mode === 'single' ? 'primary' : 'ghost'}
+                  onClick={() => setMode('single')}
                 >
                   Satu Periode
                 </Button>
                 <Button
                   size="sm"
-                  variant={mode === "range" ? "primary" : "ghost"}
-                  onClick={() => setMode("range")}
+                  variant={mode === 'range' ? 'primary' : 'ghost'}
+                  onClick={() => setMode('range')}
                 >
                   Rentang
                 </Button>
@@ -741,11 +692,7 @@ function openUndo(house: Row) {
           </div>
         </Card>
 
-        {feedback && (
-          <div className="card card-pad text-sm text-[var(--primary)]">
-            {feedback}
-          </div>
-        )}
+        {feedback && <div className="card card-pad text-sm text-[var(--primary)]">{feedback}</div>}
         {error && (
           <div className="card card-pad border border-[var(--danger)] text-sm text-[var(--danger)]">
             {error}
@@ -780,9 +727,7 @@ function openUndo(house: Row) {
           )}
           {loading && (
             <Card>
-              <p className="text-center text-sm text-[var(--muted)]">
-                Memuat data...
-              </p>
+              <p className="text-center text-sm text-[var(--muted)]">Memuat data...</p>
             </Card>
           )}
         </div>
@@ -792,24 +737,19 @@ function openUndo(house: Row) {
             <caption className="sr-only">{tableCaption}</caption>
             <TableHead>
               <TableRow>
-                <TableHeaderCell className={cx(stickyCellClass("px-4 py-3"))}>
+                <TableHeaderCell className={cx(stickyCellClass('px-4 py-3'))}>
                   Rumah
                 </TableHeaderCell>
                 <TableHeaderCell className="px-4 py-3">Pemilik</TableHeaderCell>
                 <TableHeaderCell className="px-4 py-3">Sewa</TableHeaderCell>
                 <TableHeaderCell className="px-4 py-3">Air</TableHeaderCell>
-                <TableHeaderCell className="px-4 py-3 text-right">
-                  Aksi
-                </TableHeaderCell>
+                <TableHeaderCell className="px-4 py-3 text-right">Aksi</TableHeaderCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {loading && (
                 <TableRow>
-                  <TableCell
-                    colSpan={5}
-                    className="py-6 text-center text-[var(--muted)]"
-                  >
+                  <TableCell colSpan={5} className="py-6 text-center text-[var(--muted)]">
                     Memuat data...
                   </TableCell>
                 </TableRow>
@@ -835,10 +775,7 @@ function openUndo(house: Row) {
                 })}
               {!loading && rows.length === 0 && (
                 <TableRow>
-                  <TableCell
-                    colSpan={5}
-                    className="py-6 text-center text-[var(--muted)]"
-                  >
+                  <TableCell colSpan={5} className="py-6 text-center text-[var(--muted)]">
                     Tidak ada data untuk periode ini.
                   </TableCell>
                 </TableRow>
@@ -846,9 +783,7 @@ function openUndo(house: Row) {
             </TableBody>
             <TableFooter>
               <TableRow className="bg-[#eef2ff] font-medium text-[var(--primary)]">
-                <TableCell className={cx(stickyCellClass("px-4 py-3"))}>
-                  Total
-                </TableCell>
+                <TableCell className={cx(stickyCellClass('px-4 py-3'))}>Total</TableCell>
                 <TableCell className="px-4 py-3" />
                 <TableCell className="px-4 py-3">
                   <TotalsCell
@@ -888,7 +823,7 @@ function openUndo(house: Row) {
               onClick={handleSubmitPayment}
               disabled={actionSubmitting || isPending}
             >
-              {actionSubmitting ? "Menyimpan..." : "Simpan Pembayaran"}
+              {actionSubmitting ? 'Menyimpan...' : 'Simpan Pembayaran'}
             </Button>
           </>
         }
@@ -900,8 +835,7 @@ function openUndo(house: Row) {
                 {actionModal.house.code} · {actionModal.house.owner}
               </p>
               <p className="text-xs text-[var(--muted)]">
-                Periode bawaan:{" "}
-                {isRange ? `${rangeFrom} → ${rangeTo}` : singleMonth}
+                Periode bawaan: {isRange ? `${rangeFrom} → ${rangeTo}` : singleMonth}
               </p>
             </div>
             <div className="grid gap-4">
@@ -915,9 +849,7 @@ function openUndo(house: Row) {
                   value={actionModal.periodMonth}
                   readOnly={!isRange}
                   disabled={!isRange}
-                  onChange={(event) =>
-                    updateActionAmountForNewPeriod(event.target.value)
-                  }
+                  onChange={(event) => updateActionAmountForNewPeriod(event.target.value)}
                 />
               </div>
               <div className="field-group">
@@ -930,7 +862,7 @@ function openUndo(house: Row) {
                   max={todayISO}
                   onChange={(event) =>
                     setActionModal((prev) =>
-                      prev ? { ...prev, paidAt: event.target.value } : prev,
+                      prev ? { ...prev, paidAt: event.target.value } : prev
                     )
                   }
                 />
@@ -948,7 +880,7 @@ function openUndo(house: Row) {
                   value={actionModal.amount}
                   onChange={(event) =>
                     setActionModal((prev) =>
-                      prev ? { ...prev, amount: event.target.value } : prev,
+                      prev ? { ...prev, amount: event.target.value } : prev
                     )
                   }
                 />
@@ -962,7 +894,7 @@ function openUndo(house: Row) {
                   value={actionModal.method}
                   onChange={(event) =>
                     setActionModal((prev) =>
-                      prev ? { ...prev, method: event.target.value } : prev,
+                      prev ? { ...prev, method: event.target.value } : prev
                     )
                   }
                   placeholder="Transfer, Tunai, dsb."
@@ -976,9 +908,7 @@ function openUndo(house: Row) {
                   id="modal-note"
                   value={actionModal.note}
                   onChange={(event) =>
-                    setActionModal((prev) =>
-                      prev ? { ...prev, note: event.target.value } : prev,
-                    )
+                    setActionModal((prev) => (prev ? { ...prev, note: event.target.value } : prev))
                   }
                   placeholder="Catatan internal"
                 />
@@ -1004,7 +934,7 @@ function openUndo(house: Row) {
               onClick={() => undoModal && handleUndo(undoModal.kind)}
               disabled={undoSubmitting || isPending}
             >
-              {undoSubmitting ? "Memproses..." : "Undo Terakhir"}
+              {undoSubmitting ? 'Memproses...' : 'Undo Terakhir'}
             </Button>
           </>
         }
@@ -1033,31 +963,23 @@ function openUndo(house: Row) {
                 max={rangeTo}
                 onChange={(event) =>
                   setUndoModal((prev) =>
-                    prev ? { ...prev, periodMonth: event.target.value } : prev,
+                    prev ? { ...prev, periodMonth: event.target.value } : prev
                   )
                 }
               />
             </div>
             <div className="flex gap-2">
               <Button
-                variant={undoModal.kind === "rent" ? "primary" : "ghost"}
+                variant={undoModal.kind === 'rent' ? 'primary' : 'ghost'}
                 size="sm"
-                onClick={() =>
-                  setUndoModal((prev) =>
-                    prev ? { ...prev, kind: "rent" } : prev,
-                  )
-                }
+                onClick={() => setUndoModal((prev) => (prev ? { ...prev, kind: 'rent' } : prev))}
               >
                 Sewa
               </Button>
               <Button
-                variant={undoModal.kind === "water" ? "primary" : "ghost"}
+                variant={undoModal.kind === 'water' ? 'primary' : 'ghost'}
                 size="sm"
-                onClick={() =>
-                  setUndoModal((prev) =>
-                    prev ? { ...prev, kind: "water" } : prev,
-                  )
-                }
+                onClick={() => setUndoModal((prev) => (prev ? { ...prev, kind: 'water' } : prev))}
               >
                 Air
               </Button>
@@ -1123,9 +1045,7 @@ function openUndo(house: Row) {
               <p className="text-sm font-semibold text-[var(--ink)]">
                 {occupancyModal.house.code} · {occupancyModal.house.owner}
               </p>
-              <p className="text-xs text-[var(--muted)]">
-                Tandai hunian untuk bulan tertentu.
-              </p>
+              <p className="text-xs text-[var(--muted)]">Tandai hunian untuk bulan tertentu.</p>
             </div>
             <div className="field-group">
               <label className="field-label" htmlFor="occupancy-period">
@@ -1137,9 +1057,7 @@ function openUndo(house: Row) {
                 value={occupancyModal.periodMonth}
                 onChange={(event) =>
                   setOccupancyModal((prev) =>
-                    prev
-                      ? { ...prev, periodMonth: event.target.value }
-                      : prev,
+                    prev ? { ...prev, periodMonth: event.target.value } : prev
                   )
                 }
               />
@@ -1151,11 +1069,9 @@ function openUndo(house: Row) {
                   <input
                     type="radio"
                     name="occupancy-status"
-                    checked={occupancyModal.status === "kosong"}
+                    checked={occupancyModal.status === 'kosong'}
                     onChange={() =>
-                      setOccupancyModal((prev) =>
-                        prev ? { ...prev, status: "kosong" } : prev,
-                      )
+                      setOccupancyModal((prev) => (prev ? { ...prev, status: 'kosong' } : prev))
                     }
                   />
                   Kosong
@@ -1164,11 +1080,9 @@ function openUndo(house: Row) {
                   <input
                     type="radio"
                     name="occupancy-status"
-                    checked={occupancyModal.status === "terisi"}
+                    checked={occupancyModal.status === 'terisi'}
                     onChange={() =>
-                      setOccupancyModal((prev) =>
-                        prev ? { ...prev, status: "terisi" } : prev,
-                      )
+                      setOccupancyModal((prev) => (prev ? { ...prev, status: 'terisi' } : prev))
                     }
                   />
                   Terisi
@@ -1183,9 +1097,7 @@ function openUndo(house: Row) {
                 id="occupancy-note"
                 value={occupancyModal.note}
                 onChange={(event) =>
-                  setOccupancyModal((prev) =>
-                    prev ? { ...prev, note: event.target.value } : prev,
-                  )
+                  setOccupancyModal((prev) => (prev ? { ...prev, note: event.target.value } : prev))
                 }
                 placeholder="Mis. kosong sejak pindahan"
               />
@@ -1223,31 +1135,19 @@ const DashboardRowTable = React.memo(function DashboardRowTable({
 }: DashboardRowTableProps & { onOccupancy: (row: Row) => void }) {
   return (
     <TableRow className="align-top">
-      <TableCell className={cx(stickyCellClass("px-4 py-3 font-semibold"))}>
-        {row.code}
-      </TableCell>
+      <TableCell className={cx(stickyCellClass('px-4 py-3 font-semibold'))}>{row.code}</TableCell>
       <TableCell className="px-4 py-3">
         <div className="flex flex-col gap-1">
           <span>{row.owner}</span>
           {vacant && <Badge variant="warningSoft">Kosong</Badge>}
-          {row.is_repair_fund && (
-            <Badge variant="warningSoft">Dana Perbaikan</Badge>
-          )}
+          {row.is_repair_fund && <Badge variant="warningSoft">Dana Perbaikan</Badge>}
         </div>
       </TableCell>
       <TableCell className="px-4 py-3">
-        <StatusStack
-          bill={row.rent_bill}
-          paid={row.rent_paid}
-          due={row.rent_due}
-        />
+        <StatusStack bill={row.rent_bill} paid={row.rent_paid} due={row.rent_due} />
       </TableCell>
       <TableCell className="px-4 py-3">
-        <StatusStack
-          bill={row.water_bill}
-          paid={row.water_paid}
-          due={row.water_due}
-        />
+        <StatusStack bill={row.water_bill} paid={row.water_paid} due={row.water_due} />
       </TableCell>
       <TableCell className="px-4 py-3 text-right">
         <RowActions
@@ -1286,9 +1186,7 @@ const MobileRowCard = React.memo(function MobileRowCard({
       <div className="card-pad flex flex-col gap-3">
         <div className="flex items-start justify-between">
           <div>
-            <p className="text-sm font-semibold text-[var(--ink)]">
-              {row.code}
-            </p>
+            <p className="text-sm font-semibold text-[var(--ink)]">{row.code}</p>
             <p className="text-sm text-[var(--muted)]">{row.owner}</p>
             {vacant && (
               <div className="mt-1">
@@ -1306,83 +1204,48 @@ const MobileRowCard = React.memo(function MobileRowCard({
         <div className="grid gap-3">
           <div>
             <p className="text-xs font-medium text-[var(--muted)]">Sewa</p>
-            <StatusStack
-              bill={row.rent_bill}
-              paid={row.rent_paid}
-              due={row.rent_due}
-            />
+            <StatusStack bill={row.rent_bill} paid={row.rent_paid} due={row.rent_due} />
           </div>
           <div>
             <p className="text-xs font-medium text-[var(--muted)]">Air</p>
-            <StatusStack
-              bill={row.water_bill}
-              paid={row.water_paid}
-              due={row.water_due}
-            />
+            <StatusStack bill={row.water_bill} paid={row.water_paid} due={row.water_due} />
           </div>
         </div>
-    <div className="flex flex-wrap gap-2">
-      {showRent && (
-        <Button
-          size="sm"
-          variant="primary"
-          onClick={() => onAction("rent-full", row)}
-            >
+        <div className="flex flex-wrap gap-2">
+          {showRent && (
+            <Button size="sm" variant="primary" onClick={() => onAction('rent-full', row)}>
               Sewa Lunas
             </Button>
           )}
           {showWater && (
-            <Button
-              size="sm"
-              variant="primaryOutline"
-              onClick={() => onAction("water-full", row)}
-            >
+            <Button size="sm" variant="primaryOutline" onClick={() => onAction('water-full', row)}>
               Air Lunas
             </Button>
           )}
-          <PartialMenu
-            row={row}
-            onAction={onAction}
-            showRent={showRent}
-            showWater={showWater}
-          />
+          <PartialMenu row={row} onAction={onAction} showRent={showRent} showWater={showWater} />
         </div>
       </div>
     </Card>
   );
 });
 
-function StatusStack({
-  bill,
-  paid,
-  due,
-}: {
-  bill: number;
-  paid: number;
-  due: number;
-}) {
+function StatusStack({ bill, paid, due }: { bill: number; paid: number; due: number }) {
   const dueRounded = Number(due.toFixed(0));
   const showBadge = dueRounded <= 0;
   return (
     <div className="flex flex-col gap-1 text-xs">
       <span className="text-[var(--muted)]">
-        Tagih{" "}
-        <span className="tabular-nums text-[var(--ink)]">{idr(bill)}</span>
+        Tagih <span className="tabular-nums text-[var(--ink)]">{idr(bill)}</span>
       </span>
       <span className="text-[var(--muted)]">
-        Bayar{" "}
-        <span className="tabular-nums font-semibold text-[#047857]">
-          {idr(paid)}
-        </span>
+        Bayar <span className="tabular-nums font-semibold text-[#047857]">{idr(paid)}</span>
       </span>
       <span className="text-[var(--muted)]">
-        Tunggak{" "}
+        Tunggak{' '}
         {showBadge ? (
           <Badge variant="success">Lunas</Badge>
         ) : (
-          <span className="tabular-nums font-semibold text-[#dc2626]">
-            {idr(due)}
-          </span>
+          <span className="tabular-nums font-semibold text-[#dc2626]">{idr(due)}</span>
         )}
       </span>
     </div>
@@ -1405,23 +1268,17 @@ function TotalsCell({
     <div className="flex flex-col gap-1 text-xs">
       <span className="font-medium text-[var(--muted)]">{label}</span>
       <span className="text-[var(--muted)]">
-        Tagih{" "}
-        <span className="tabular-nums text-[var(--ink)]">{idr(bill)}</span>
+        Tagih <span className="tabular-nums text-[var(--ink)]">{idr(bill)}</span>
       </span>
       <span className="text-[var(--muted)]">
-        Bayar{" "}
-        <span className="tabular-nums font-semibold text-[#047857]">
-          {idr(paid)}
-        </span>
+        Bayar <span className="tabular-nums font-semibold text-[#047857]">{idr(paid)}</span>
       </span>
       <span className="text-[var(--muted)]">
-        Tunggak{" "}
+        Tunggak{' '}
         {showBadge ? (
           <Badge variant="success">Lunas</Badge>
         ) : (
-          <span className="tabular-nums font-semibold text-[#dc2626]">
-            {idr(due)}
-          </span>
+          <span className="tabular-nums font-semibold text-[#dc2626]">{idr(due)}</span>
         )}
       </span>
     </div>
@@ -1436,39 +1293,21 @@ function RowActions({
   onUndo,
   onDetail,
   onOccupancy,
-}: RowActionHandlers & { row: Row; showRent: boolean; showWater: boolean; }) {
+}: RowActionHandlers & { row: Row; showRent: boolean; showWater: boolean }) {
   return (
     <div className="flex items-center justify-end gap-2">
       {showRent && (
-        <Button
-          size="sm"
-          variant="primary"
-          onClick={() => onAction("rent-full", row)}
-        >
+        <Button size="sm" variant="primary" onClick={() => onAction('rent-full', row)}>
           Sewa Lunas
         </Button>
       )}
       {showWater && (
-        <Button
-          size="sm"
-          variant="primaryOutline"
-          onClick={() => onAction("water-full", row)}
-        >
+        <Button size="sm" variant="primaryOutline" onClick={() => onAction('water-full', row)}>
           Air Lunas
         </Button>
       )}
-      <PartialMenu
-        row={row}
-        showRent={showRent}
-        showWater={showWater}
-        onAction={onAction}
-      />
-      <RowMenu
-        row={row}
-        onUndo={onUndo}
-        onDetail={onDetail}
-        onOccupancy={onOccupancy}
-      />
+      <PartialMenu row={row} showRent={showRent} showWater={showWater} onAction={onAction} />
+      <RowMenu row={row} onUndo={onUndo} onDetail={onDetail} onOccupancy={onOccupancy} />
     </div>
   );
 }
@@ -1497,9 +1336,9 @@ function PartialMenu({
       }
     }
     if (open) {
-      document.addEventListener("mousedown", handleClick);
+      document.addEventListener('mousedown', handleClick);
     }
-    return () => document.removeEventListener("mousedown", handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
   }, [open]);
 
   const canPartialRent = showRent;
@@ -1523,7 +1362,7 @@ function PartialMenu({
               type="button"
               className="w-full rounded-[var(--radius)] px-3 py-2 text-left text-sm hover:bg-[#eef2ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
               onClick={() => {
-                onAction("rent-partial", row);
+                onAction('rent-partial', row);
                 setOpen(false);
               }}
             >
@@ -1535,7 +1374,7 @@ function PartialMenu({
               type="button"
               className="w-full rounded-[var(--radius)] px-3 py-2 text-left text-sm hover:bg-[#eef2ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
               onClick={() => {
-                onAction("water-partial", row);
+                onAction('water-partial', row);
                 setOpen(false);
               }}
             >
@@ -1569,8 +1408,8 @@ function RowMenu({
         setOpen(false);
       }
     }
-    if (open) document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
+    if (open) document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
   }, [open]);
 
   return (
@@ -1640,9 +1479,7 @@ function DetailBreakdown({
     const entries = Object.entries(map.rent[houseId] || {});
     return entries
       .filter(([period]) =>
-        mode === "single"
-          ? period === single
-          : period >= range.from && period <= range.to,
+        mode === 'single' ? period === single : period >= range.from && period <= range.to
       )
       .sort(([a], [b]) => (a > b ? 1 : -1));
   }, [map.rent, houseId, mode, range.from, range.to, single]);
@@ -1651,9 +1488,7 @@ function DetailBreakdown({
     const entries = Object.entries(map.water[houseId] || {});
     return entries
       .filter(([period]) =>
-        mode === "single"
-          ? period === single
-          : period >= range.from && period <= range.to,
+        mode === 'single' ? period === single : period >= range.from && period <= range.to
       )
       .sort(([a], [b]) => (a > b ? 1 : -1));
   }, [map.water, houseId, mode, range.from, range.to, single]);
@@ -1670,9 +1505,7 @@ function DetailBreakdown({
     <div className="space-y-4">
       {rentEntries.length > 0 && (
         <div className="space-y-2">
-          <h3 className="text-sm font-semibold text-[var(--ink)]">
-            Sewa per periode
-          </h3>
+          <h3 className="text-sm font-semibold text-[var(--ink)]">Sewa per periode</h3>
           <ul className="space-y-1 text-sm">
             {rentEntries.map(([period, value]) => (
               <li
@@ -1680,17 +1513,11 @@ function DetailBreakdown({
                 className="flex items-center justify-between rounded-[var(--radius)] border border-[var(--border)] px-3 py-2"
               >
                 <div>
-                  <p className="font-medium text-[var(--ink)]">
-                    {isoToMonth(period)}
-                  </p>
-                  <p className="text-xs text-[var(--muted)]">
-                    Tagih {idr(value.rent_bill)}
-                  </p>
+                  <p className="font-medium text-[var(--ink)]">{isoToMonth(period)}</p>
+                  <p className="text-xs text-[var(--muted)]">Tagih {idr(value.rent_bill)}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-xs text-[#047857]">
-                    Bayar {idr(value.rent_paid)}
-                  </p>
+                  <p className="text-xs text-[#047857]">Bayar {idr(value.rent_paid)}</p>
                   {value.rent_due > 0 ? (
                     <p className="text-xs font-semibold text-[#dc2626]">
                       Tunggak {idr(value.rent_due)}
@@ -1707,9 +1534,7 @@ function DetailBreakdown({
 
       {waterEntries.length > 0 && (
         <div className="space-y-2">
-          <h3 className="text-sm font-semibold text-[var(--ink)]">
-            Air per periode
-          </h3>
+          <h3 className="text-sm font-semibold text-[var(--ink)]">Air per periode</h3>
           <ul className="space-y-1 text-sm">
             {waterEntries.map(([period, value]) => (
               <li
@@ -1717,17 +1542,11 @@ function DetailBreakdown({
                 className="flex items-center justify-between rounded-[var(--radius)] border border-[var(--border)] px-3 py-2"
               >
                 <div>
-                  <p className="font-medium text-[var(--ink)]">
-                    {isoToMonth(period)}
-                  </p>
-                  <p className="text-xs text-[var(--muted)]">
-                    Tagih {idr(value.water_bill)}
-                  </p>
+                  <p className="font-medium text-[var(--ink)]">{isoToMonth(period)}</p>
+                  <p className="text-xs text-[var(--muted)]">Tagih {idr(value.water_bill)}</p>
                 </div>
                 <div className="text-right">
-                  <p className="text-xs text-[#047857]">
-                    Bayar {idr(value.water_paid)}
-                  </p>
+                  <p className="text-xs text-[#047857]">Bayar {idr(value.water_paid)}</p>
                   {value.water_due > 0 ? (
                     <p className="text-xs font-semibold text-[#dc2626]">
                       Tunggak {idr(value.water_due)}

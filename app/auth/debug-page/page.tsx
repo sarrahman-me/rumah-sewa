@@ -1,11 +1,14 @@
-"use client";
+'use client';
 
-import * as React from "react";
-import { supabase } from "@/lib/supabase";
+// Client debug page for Supabase auth state; formatting only, no behavior changes.
+
+import * as React from 'react';
+
+import { supabase } from '@/lib/supabase';
 
 export default function AuthDebugPage() {
   const [sessionInfo, setSessionInfo] = React.useState<any>(null);
-  const [cookiesString, setCookiesString] = React.useState("");
+  const [cookiesString, setCookiesString] = React.useState('');
 
   React.useEffect(() => {
     (async () => {
@@ -22,16 +25,14 @@ export default function AuthDebugPage() {
 
   return (
     <div className="mx-auto max-w-xl space-y-4 p-4">
-      <h1 className="text-xl font-semibold text-blue-700">
-        Auth Debug (Client)
-      </h1>
+      <h1 className="text-xl font-semibold text-blue-700">Auth Debug (Client)</h1>
       <pre className="rounded-lg border border-blue-200 bg-blue-50/40 p-3 text-sm text-slate-700">
         {JSON.stringify(sessionInfo, null, 2)}
       </pre>
       <div>
         <h2 className="text-sm font-semibold text-blue-600">document.cookie</h2>
         <pre className="mt-2 rounded-lg border border-blue-200 bg-white p-3 text-xs text-slate-600">
-          {cookiesString || "(empty)"}
+          {cookiesString || '(empty)'}
         </pre>
       </div>
     </div>

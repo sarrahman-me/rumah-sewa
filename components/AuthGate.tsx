@@ -1,11 +1,14 @@
-"use client";
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { createClient } from "@supabase/supabase-js";
+'use client';
+
+// AuthGate guards protected routes; formatting only, no behavior changes.
+
+import { createClient } from '@supabase/supabase-js';
+import { useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
@@ -14,7 +17,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
-      if (!data.session) router.replace("/auth/login");
+      if (!data.session) router.replace('/auth/login');
       else setLoading(false);
     });
   }, [router]);

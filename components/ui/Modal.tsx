@@ -1,6 +1,7 @@
-import * as React from "react";
-import { createPortal } from "react-dom";
-import { cx } from "./utils";
+// Modal primitive with accessible focus management; formatting only, no behavior changes.
+import * as React from 'react';
+import { createPortal } from 'react-dom';
+import { cx } from './utils';
 
 const focusableSelectors =
   'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])';
@@ -44,19 +45,19 @@ export function Modal({
 
     const focusable = dialog.querySelectorAll<HTMLElement>(focusableSelectors);
     const firstFocusable = focusable[0];
-    const titleElement = dialog.querySelector<HTMLElement>("[data-modal-title]");
+    const titleElement = dialog.querySelector<HTMLElement>('[data-modal-title]');
 
     const toFocus = titleElement || firstFocusable || dialog;
     toFocus.focus();
 
     function handleKeydown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
+      if (event.key === 'Escape') {
         event.preventDefault();
         onOpenChange(false);
         return;
       }
 
-      if (event.key === "Tab") {
+      if (event.key === 'Tab') {
         if (!focusable.length) {
           event.preventDefault();
           return;
@@ -77,12 +78,12 @@ export function Modal({
       }
     }
 
-    document.addEventListener("keydown", handleKeydown);
-    document.body.style.overflow = "hidden";
+    document.addEventListener('keydown', handleKeydown);
+    document.body.style.overflow = 'hidden';
 
     return () => {
-      document.removeEventListener("keydown", handleKeydown);
-      document.body.style.overflow = "";
+      document.removeEventListener('keydown', handleKeydown);
+      document.body.style.overflow = '';
     };
   }, [open, onOpenChange]);
 
@@ -114,22 +115,18 @@ export function Modal({
         aria-describedby={description ? descriptionId : undefined}
         tabIndex={-1}
         className={cx(
-          "focus-visible:outline-none",
-          "w-full animate-in fade-in duration-200",
-          "max-h-full overflow-y-auto rounded-[var(--radius)] bg-white shadow-lg",
-          "sm:max-w-lg",
-          className,
+          'focus-visible:outline-none',
+          'w-full animate-in fade-in duration-200',
+          'max-h-full overflow-y-auto rounded-[var(--radius)] bg-white shadow-lg',
+          'sm:max-w-lg',
+          className
         )}
         data-modal
       >
         <div className="flex flex-col gap-4 p-6">
           {title && (
             <div>
-              <h2
-                id={labelId}
-                data-modal-title
-                className="text-lg font-semibold text-[var(--ink)]"
-              >
+              <h2 id={labelId} data-modal-title className="text-lg font-semibold text-[var(--ink)]">
                 {title}
               </h2>
               {description && (
@@ -144,6 +141,6 @@ export function Modal({
         {footer && <div className="flex flex-wrap justify-end gap-2 px-6 pb-6">{footer}</div>}
       </div>
     </div>,
-    document.body,
+    document.body
   );
 }

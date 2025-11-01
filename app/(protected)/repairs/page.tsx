@@ -1,10 +1,14 @@
-"use client";
+'use client';
 
-import * as React from "react";
-import { AuthGate } from "@/components/AuthGate";
-import { supabase } from "@/lib/supabase";
-import { currentPeriodISO } from "@/lib/period";
-import { idr } from "@/lib/format";
+// Repairs page tracks maintenance costs; cosmetic changes only, no behavior changes.
+
+import * as React from 'react';
+
+import { AuthGate } from '@/components/AuthGate';
+
+import { idr } from '@/lib/format';
+import { currentPeriodISO } from '@/lib/period';
+import { supabase } from '@/lib/supabase';
 
 type HouseOption = { id: string; code: string; owner: string };
 
@@ -21,22 +25,22 @@ type RepairRow = {
 
 function isoFirstDayFromMonth(value: string): string {
   if (!value) return currentPeriodISO();
-  const [year, month] = value.split("-");
+  const [year, month] = value.split('-');
   if (!year || !month) return currentPeriodISO();
-  return `${year}-${month.padStart(2, "0")}-01`;
+  return `${year}-${month.padStart(2, '0')}-01`;
 }
 
 function toDisplayDate(periodISO: string): string {
-  return new Date(periodISO).toLocaleDateString("id-ID", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
+  return new Date(periodISO).toLocaleDateString('id-ID', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
   });
 }
 
 function parseNumberLoose(value: string): number | null {
   if (!value) return null;
-  const numeric = Number(value.replace(/\./g, "").replace(",", "."));
+  const numeric = Number(value.replace(/\./g, '').replace(',', '.'));
   return Number.isFinite(numeric) ? numeric : null;
 }
 
@@ -49,35 +53,28 @@ export default function RepairsPage() {
 }
 
 function RepairsView() {
-  const [filterMonth, setFilterMonth] = React.useState(
-    () => currentPeriodISO().slice(0, 7),
-  );
-  const [formMonth, setFormMonth] = React.useState(
-    () => currentPeriodISO().slice(0, 7),
-  );
+  const [filterMonth, setFilterMonth] = React.useState(() => currentPeriodISO().slice(0, 7));
+  const [formMonth, setFormMonth] = React.useState(() => currentPeriodISO().slice(0, 7));
   const [houses, setHouses] = React.useState<HouseOption[]>([]);
   const [rows, setRows] = React.useState<RepairRow[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [message, setMessage] = React.useState<string | null>(null);
 
   const [form, setForm] = React.useState({
-    house_id: "",
-    description: "",
-    amount: "",
+    house_id: '',
+    description: '',
+    amount: '',
   });
 
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [editForm, setEditForm] = React.useState({
-    month: "",
-    house_id: "",
-    description: "",
-    amount: "",
+    month: '',
+    house_id: '',
+    description: '',
+    amount: '',
   });
 
-  const periodISO = React.useMemo(
-    () => isoFirstDayFromMonth(filterMonth),
-    [filterMonth],
-  );
+  const periodISO = React.useMemo(() => isoFirstDayFromMonth(filterMonth), [filterMonth]);
 
   React.useEffect(() => {
     setFormMonth(filterMonth);
@@ -85,10 +82,7 @@ function RepairsView() {
 
   React.useEffect(() => {
     (async () => {
-      const { data, error } = await supabase
-        .from("houses")
-        .select("id,code,owner")
-        .order("code");
+      const { data, error } = await supabase.from('houses').select('id,code,owner').order('code');
       if (!error && data) {
         setHouses(data as any);
       }
@@ -103,12 +97,10 @@ function RepairsView() {
   async function loadRepairs() {
     setLoading(true);
     const { data, error } = await supabase
-      .from("repairs")
-      .select(
-        "id, period, house_id, description, amount, deleted_at, houses:house_id(code, owner)",
-      )
-      .eq("period", periodISO)
-      .order("created_at", { ascending: false });
+      .from('repairs')
+      .select('id, period, house_id, description, amount, deleted_at, houses:house_id(code, owner)')
+      .eq('period', periodISO)
+      .order('created_at', { ascending: false });
     if (error) {
       setMessage(error.message);
     } else {
@@ -123,18 +115,15 @@ function RepairsView() {
           deleted_at: row.deleted_at,
           house_code: row.houses?.code ?? null,
           house_owner: row.houses?.owner ?? null,
-        })) ?? [],
+        })) ?? []
       );
     }
     setLoading(false);
   }
 
   const totalActive = React.useMemo(
-    () =>
-      rows
-        .filter((row) => !row.deleted_at)
-        .reduce((sum, row) => sum + row.amount, 0),
-    [rows],
+    () => rows.filter((row) => !row.deleted_at).reduce((sum, row) => sum + row.amount, 0),
+    [rows]
   );
 
   async function handleCreate(e: React.FormEvent<HTMLFormElement>) {
@@ -142,11 +131,11 @@ function RepairsView() {
     const iso = isoFirstDayFromMonth(formMonth);
     const amountNum = parseNumberLoose(form.amount);
     if (amountNum == null || amountNum <= 0) {
-      setMessage("Nominal harus lebih besar dari 0.");
+      setMessage('Nominal harus lebih besar dari 0.');
       return;
     }
     if (!form.description.trim()) {
-      setMessage("Deskripsi wajib diisi.");
+      setMessage('Deskripsi wajib diisi.');
       return;
     }
 
@@ -157,13 +146,13 @@ function RepairsView() {
     };
     if (form.house_id) payload.house_id = form.house_id;
 
-    const { error } = await supabase.from("repairs").insert(payload);
+    const { error } = await supabase.from('repairs').insert(payload);
     if (error) {
       setMessage(error.message);
       return;
     }
-    setMessage("Pengeluaran ditambahkan.");
-    setForm({ house_id: "", description: "", amount: "" });
+    setMessage('Pengeluaran ditambahkan.');
+    setForm({ house_id: '', description: '', amount: '' });
     await loadRepairs();
   }
 
@@ -171,7 +160,7 @@ function RepairsView() {
     setEditingId(row.id);
     setEditForm({
       month: row.period.slice(0, 7),
-      house_id: row.house_id ?? "",
+      house_id: row.house_id ?? '',
       description: row.description,
       amount: String(row.amount),
     });
@@ -179,18 +168,18 @@ function RepairsView() {
 
   function cancelEdit() {
     setEditingId(null);
-    setEditForm({ month: "", house_id: "", description: "", amount: "" });
+    setEditForm({ month: '', house_id: '', description: '', amount: '' });
   }
 
   async function submitEdit(id: string) {
     const iso = isoFirstDayFromMonth(editForm.month || filterMonth);
     const amountNum = parseNumberLoose(editForm.amount);
     if (amountNum == null || amountNum <= 0) {
-      setMessage("Nominal harus lebih besar dari 0.");
+      setMessage('Nominal harus lebih besar dari 0.');
       return;
     }
     if (!editForm.description.trim()) {
-      setMessage("Deskripsi wajib diisi.");
+      setMessage('Deskripsi wajib diisi.');
       return;
     }
     const pSet: Record<string, any> = {
@@ -199,7 +188,7 @@ function RepairsView() {
       amount: amountNum,
       house_id: editForm.house_id || null,
     };
-    const { error } = await supabase.rpc("update_repair", {
+    const { error } = await supabase.rpc('update_repair', {
       p_id: id,
       p_set: pSet,
     });
@@ -207,41 +196,40 @@ function RepairsView() {
       setMessage(error.message);
       return;
     }
-    setMessage("Pengeluaran diperbarui.");
+    setMessage('Pengeluaran diperbarui.');
     setEditingId(null);
     await loadRepairs();
   }
 
   async function softDelete(id: string) {
     const confirmDelete = window.confirm(
-      "Hapus pengeluaran ini? Tindakan ini hanya bisa dibatalkan dengan pulihkan.",
+      'Hapus pengeluaran ini? Tindakan ini hanya bisa dibatalkan dengan pulihkan.'
     );
     if (!confirmDelete) return;
-    const { error } = await supabase.rpc("soft_delete_repair", {
+    const { error } = await supabase.rpc('soft_delete_repair', {
       p_id: id,
     });
     if (error) {
       setMessage(error.message);
       return;
     }
-    setMessage("Pengeluaran dihapus.");
+    setMessage('Pengeluaran dihapus.');
     await loadRepairs();
   }
 
   async function restore(id: string) {
-    const confirmRestore = window.confirm("Pulihkan pengeluaran ini?");
+    const confirmRestore = window.confirm('Pulihkan pengeluaran ini?');
     if (!confirmRestore) return;
-    const { error } = await supabase.rpc("restore_repair", { p_id: id });
+    const { error } = await supabase.rpc('restore_repair', { p_id: id });
     if (error) {
       setMessage(error.message);
       return;
     }
-    setMessage("Pengeluaran dipulihkan.");
+    setMessage('Pengeluaran dipulihkan.');
     await loadRepairs();
   }
 
-  const houseLabel = (row: RepairRow) =>
-    row.house_code ? `${row.house_code}` : "Umum";
+  const houseLabel = (row: RepairRow) => (row.house_code ? `${row.house_code}` : 'Umum');
 
   return (
     <div className="space-y-6">
@@ -250,10 +238,7 @@ function RepairsView() {
         <p className="text-xs text-slate-500">
           Catat setiap pengeluaran yang diambil dari dana perbaikan bersama.
         </p>
-        <form
-          onSubmit={handleCreate}
-          className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
-        >
+        <form onSubmit={handleCreate} className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <label className="flex flex-col gap-1 text-sm text-slate-600">
             <span>Periode</span>
             <input
@@ -267,9 +252,7 @@ function RepairsView() {
             <span>Rumah</span>
             <select
               value={form.house_id}
-              onChange={(e) =>
-                setForm((prev) => ({ ...prev, house_id: e.target.value }))
-              }
+              onChange={(e) => setForm((prev) => ({ ...prev, house_id: e.target.value }))}
               className="rounded-lg border border-blue-200 bg-white px-3 py-2"
             >
               <option value="">Umum</option>
@@ -284,9 +267,7 @@ function RepairsView() {
             <span>Deskripsi</span>
             <input
               value={form.description}
-              onChange={(e) =>
-                setForm((prev) => ({ ...prev, description: e.target.value }))
-              }
+              onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
               placeholder="Contoh: Banner sewa lingkungan"
               className="rounded-lg border border-blue-200 bg-white px-3 py-2"
               required
@@ -298,9 +279,7 @@ function RepairsView() {
               type="number"
               min="0"
               value={form.amount}
-              onChange={(e) =>
-                setForm((prev) => ({ ...prev, amount: e.target.value }))
-              }
+              onChange={(e) => setForm((prev) => ({ ...prev, amount: e.target.value }))}
               placeholder="100000"
               className="rounded-lg border border-blue-200 bg-white px-3 py-2"
               required
@@ -325,14 +304,10 @@ function RepairsView() {
       <section className="rounded-xl border border-blue-100 bg-white p-4 shadow-sm sm:p-6">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-blue-700">
-              Riwayat Pengeluaran
-            </h2>
+            <h2 className="text-lg font-semibold text-blue-700">Riwayat Pengeluaran</h2>
             <p className="text-xs text-slate-500">
-              Total aktif bulan {filterMonth}:{" "}
-              <span className="font-semibold text-blue-700">
-                {idr(totalActive)}
-              </span>
+              Total aktif bulan {filterMonth}:{' '}
+              <span className="font-semibold text-blue-700">{idr(totalActive)}</span>
             </p>
           </div>
           <label className="flex items-center gap-2 text-sm text-slate-600">
@@ -361,20 +336,14 @@ function RepairsView() {
             <tbody>
               {loading && (
                 <tr>
-                  <td
-                    colSpan={6}
-                    className="px-3 py-4 text-center text-slate-400"
-                  >
+                  <td colSpan={6} className="px-3 py-4 text-center text-slate-400">
                     Memuat data pengeluaran...
                   </td>
                 </tr>
               )}
               {!loading && rows.length === 0 && (
                 <tr>
-                  <td
-                    colSpan={6}
-                    className="px-3 py-4 text-center text-slate-400"
-                  >
+                  <td colSpan={6} className="px-3 py-4 text-center text-slate-400">
                     Belum ada pengeluaran pada bulan ini.
                   </td>
                 </tr>
@@ -392,17 +361,12 @@ function RepairsView() {
                     </span>
                   );
                   return (
-                    <tr
-                      key={row.id}
-                      className="border-t border-blue-100 text-slate-700"
-                    >
+                    <tr key={row.id} className="border-t border-blue-100 text-slate-700">
                       <td className="px-3 py-3">{toDisplayDate(row.period)}</td>
                       <td className="px-3 py-3">
                         {houseLabel(row)}
                         {row.house_owner && (
-                          <span className="ml-2 text-xs text-slate-400">
-                            ({row.house_owner})
-                          </span>
+                          <span className="ml-2 text-xs text-slate-400">({row.house_owner})</span>
                         )}
                       </td>
                       <td className="px-3 py-3">
